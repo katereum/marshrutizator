@@ -1,0 +1,308 @@
+:root {
+  --black: #111;
+  --red: #d62828;
+  --red-deep: #8f1a1a;
+  --red-bright: #ef4444;
+  --cream: #fff4ec;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--black);
+  background: #ffffff;
+}
+
+.topbar {
+  padding: 16px 32px;
+  border-bottom: 1px solid #fdeaea;
+  background: #ffffff;
+}
+
+.brand {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--red);
+}
+
+.hero {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 48px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 64px 32px;
+  background:
+    radial-gradient(900px 500px at 12% -10%, rgba(255, 255, 255, 0.22), transparent 60%),
+    radial-gradient(700px 500px at 95% 110%, rgba(143, 26, 26, 0.55), transparent 62%),
+    linear-gradient(120deg, var(--red-deep), var(--red), var(--red-bright));
+  background-size: 180% 180%, 160% 160%, 100% 100%;
+  animation: heroShift 18s ease-in-out infinite alternate;
+  color: #fff;
+}
+
+.hero-left, .hero-right {
+  position: relative;
+  z-index: 2;
+}
+
+.hero-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 1 1 320px;
+  max-width: 620px;
+}
+
+.hero-left h1 {
+  margin: 0 0 8px;
+  font-size: 40px;
+  line-height: 1.1;
+}
+
+.tagline {
+  margin: 0 0 16px;
+  font-size: 24px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.sub {
+  margin: 0;
+  font-size: 16px;
+  color: #ffe8e8;
+}
+
+#car {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  width: 200px;
+  height: auto;
+  pointer-events: none;
+  will-change: transform;
+  transform-origin: center;
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.25));
+}
+
+#car svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.bg-decor {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  perspective: 900px;
+}
+
+.cube {
+  --s: 40px;
+  position: absolute;
+  width: var(--s);
+  height: var(--s);
+  transform-style: preserve-3d;
+  animation: floatCube 14s ease-in-out infinite;
+}
+
+.cube .f {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  box-shadow: 0 0 18px rgba(255, 255, 255, 0.08);
+}
+
+.f-top { transform: rotateX(90deg) translateZ(calc(var(--s) / 2)); }
+.f-left { transform: rotateY(-90deg) translateZ(calc(var(--s) / 2)); }
+.f-right { transform: rotateY(90deg) translateZ(calc(var(--s) / 2)); }
+
+.pixel {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.28);
+  animation: pixelFloat 9s ease-in-out infinite;
+}
+
+@keyframes heroShift {
+  0% { background-position: 0% 0%, 100% 100%, 0 0; }
+  100% { background-position: 100% 100%, 0% 0%, 0 0; }
+}
+
+@keyframes floatCube {
+  0% { transform: rotateX(-30deg) rotateY(45deg) translateY(0) scale(1); opacity: 0.75; }
+  50% { transform: rotateX(-20deg) rotateY(58deg) translateY(-28px) scale(1.07); opacity: 1; }
+  100% { transform: rotateX(-30deg) rotateY(45deg) translateY(0) scale(1); opacity: 0.75; }
+}
+
+@keyframes pixelFloat {
+  0%, 100% { transform: translateY(0); opacity: 0.35; }
+  50% { transform: translateY(-22px); opacity: 0.9; }
+}
+
+.hero-right {
+  background: #fff;
+  color: var(--black);
+  border-radius: 16px;
+  padding: 28px;
+  width: 100%;
+  flex: 1 1 360px;
+  max-width: 440px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+
+.hero-right h2 {
+  margin: 0 0 20px;
+  font-size: 18px;
+}
+
+.home-field {
+  margin-bottom: 16px;
+}
+
+.home-field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 6px;
+}
+
+.home-field input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  font-size: 14px;
+  color: var(--black);
+  background: #f8fafc;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.home-field input:focus {
+  outline: none;
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(214, 40, 40, 0.12);
+}
+
+.home-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.upload {
+  display: block;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #334155;
+  transition: border-color 0.2s;
+}
+
+.upload:hover { border-color: var(--red); }
+.upload.filled { border-style: solid; border-color: var(--red); color: var(--black); }
+
+.primary {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 14px 20px;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(120deg, var(--red), var(--red-bright));
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  text-align: center;
+}
+
+.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hint { font-size: 12px; color: #64748b; margin: 10px 0 0; }
+
+.status {
+  margin: 24px 32px;
+  padding: 16px 20px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  font-size: 15px;
+}
+
+.status.error { background: #fee2e2; color: #991b1b; }
+
+.done { font-size: 20px; font-weight: 700; margin: 8px 0 16px; }
+
+.result-meta { font-size: 14px; color: #334155; margin: 0 0 16px; }
+
+#result { margin: 24px 32px; }
+
+#map-section { margin: 24px 32px 48px; }
+
+.map-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.map-toolbar h2 { margin: 0; }
+
+.day-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #334155;
+}
+
+.day-filter select {
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--black);
+  background: #ffffff;
+}
+
+#map { height: 420px; border-radius: 12px; }
+
+.hidden { display: none; }
+
+@media (max-width: 640px) {
+  .topbar { padding: 12px 16px; }
+  .brand { font-size: 18px; }
+
+  .hero { padding: 40px 16px; gap: 24px; }
+  .hero-left h1 { font-size: 30px; }
+  .tagline { font-size: 20px; }
+  .sub { font-size: 15px; }
+
+  .hero-right { padding: 20px; }
+
+  .status { margin: 16px; }
+  #result { margin: 16px; }
+  #map-section { margin: 16px 16px 40px; }
+  #map { height: 280px; }
+
+  #car { width: 150px; }
+}

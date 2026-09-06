@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Маршрутизатор</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">Маршрутизатор</span>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="bg-decor" aria-hidden="true">
+        <div class="cube" style="--s:52px; left:5%; top:12%; animation-duration:16s; animation-delay:-2s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <div class="cube" style="--s:30px; left:22%; top:70%; animation-duration:13s; animation-delay:-6s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <div class="cube" style="--s:22px; left:44%; top:22%; animation-duration:11s; animation-delay:-4s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <div class="cube" style="--s:38px; left:60%; top:6%; animation-duration:18s; animation-delay:-8s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <div class="cube" style="--s:26px; left:78%; top:55%; animation-duration:14s; animation-delay:-3s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <div class="cube" style="--s:16px; left:90%; top:20%; animation-duration:12s; animation-delay:-5s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <div class="cube" style="--s:20px; left:12%; top:82%; animation-duration:17s; animation-delay:-7s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <div class="cube" style="--s:34px; left:32%; top:5%; animation-duration:15s; animation-delay:-9s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <div class="cube" style="--s:24px; left:50%; top:88%; animation-duration:12s; animation-delay:-5.5s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <div class="cube" style="--s:44px; left:70%; top:40%; animation-duration:19s; animation-delay:-11s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <div class="cube" style="--s:18px; left:86%; top:8%; animation-duration:13s; animation-delay:-6.5s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <div class="cube" style="--s:28px; left:6%; top:48%; animation-duration:16s; animation-delay:-1.5s;">
+          <i class="f f-top"></i><i class="f f-left"></i><i class="f f-right"></i>
+        </div>
+        <span class="pixel" style="left:15%; top:45%; animation-delay:-1s;"></span>
+        <span class="pixel" style="left:35%; top:85%; animation-delay:-3.5s;"></span>
+        <span class="pixel" style="left:55%; top:12%; animation-delay:-6s;"></span>
+        <span class="pixel" style="left:82%; top:80%; animation-delay:-2.5s;"></span>
+        <span class="pixel" style="left:28%; top:30%; animation-delay:-8s;"></span>
+        <span class="pixel" style="left:64%; top:70%; animation-delay:-4.5s;"></span>
+        <span class="pixel" style="left:92%; top:60%; animation-delay:-7s;"></span>
+        <span class="pixel" style="left:10%; top:6%; animation-delay:-2s;"></span>
+      </div>
+
+      <div class="hero-left">
+        <h1>Оптимизируй свой маршрут!</h1>
+        <p class="tagline">Управляй хаосом!</p>
+        <p class="sub">Загрузи базу для планирования — получи маршрутный лист.</p>
+
+        
+
+        
+
+
+        
+      </div>
+
+      <div class="hero-right">
+        <h2>Готовы оптимизировать маршрут?</h2>
+
+        <div class="home-field">
+          <label for="home-address">Домашний адрес (откуда выезжаете)</label>
+          <input type="text" id="home-address" placeholder="Город, улица, дом" autocomplete="off">
+          <p class="home-note">Отсюда начинается и куда возвращается маршрут.</p>
+        </div>
+
+        <label class="upload" for="planning-file">
+          <span class="upload-label" id="planning-label">Загрузить базу для планирования</span>
+          <input type="file" id="planning-file" accept=".xlsx" hidden>
+        </label>
+
+        <label class="upload" for="template-file">
+          <span class="upload-label" id="template-label">Загрузить маршрутный лист</span>
+          <input type="file" id="template-file" accept=".xlsx" hidden>
+        </label>
+
+        <button id="optimize-btn" class="primary" disabled>Упорядочь хаос</button>
+        <p class="hint" id="hint">Загрузите оба файла, чтобы начать.</p>
+      </div>
+    </section>
+
+    <section id="status" class="status hidden" aria-live="polite"></section>
+
+    <section id="result" class="hidden">
+      <p class="done">Маршрут готов!</p>
+      <p id="result-meta" class="result-meta hidden"></p>
+      <a id="download-link" class="primary" href="#">Скачать маршрутный лист</a>
+    </section>
+
+    <section id="map-section" class="hidden">
+      <div class="map-toolbar">
+        <h2>Маршруты по дням</h2>
+        <label class="day-filter">
+          <span>Показать:</span>
+          <select id="day-select">
+            <option value="all">Все дни</option>
+          </select>
+        </label>
+      </div>
+      <div id="map"></div>
+    </section>
+  </main>
+
+  
+
+  <div id="car" aria-hidden="true">
+  <svg viewBox="0 0 340 150" role="img" aria-label="Красно-белый кабриолет с лисом">
+    <defs>
+      <linearGradient id="fur" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#fb8b4c"/>
+        <stop offset="0.5" stop-color="#ea5a23"/>
+        <stop offset="1" stop-color="#b8320e"/>
+      </linearGradient>
+    </defs>
+    <circle cx="95" cy="132" r="24" fill="#1b1b1b"/>
+    <circle cx="270" cy="132" r="24" fill="#1b1b1b"/>
+    <circle cx="95" cy="132" r="10" fill="#f1f5f9"/>
+    <circle cx="270" cy="132" r="10" fill="#f1f5f9"/>
+    <circle cx="95" cy="132" r="4" fill="#94a3b8"/>
+    <circle cx="270" cy="132" r="4" fill="#94a3b8"/>
+    <path d="M36 132 L40 104 C48 96 72 92 96 90 L226 90 C256 92 288 100 306 112 L320 124 C324 130 322 136 316 136 L44 136 C38 136 34 134 36 132 Z" fill="#d62828"/>
+    <rect x="44" y="116" width="264" height="6" rx="3" fill="#ffffff"/>
+    <path d="M226 92 L244 64 L260 64 L246 92 Z" fill="#dbeafe" stroke="#cbd5e1" stroke-width="1.5"/>
+    <path d="M150 92 C150 70 164 60 178 62 C190 64 200 72 206 80 C209 84 206 88 201 89 C191 92 182 94 174 94 C166 94 154 98 150 92 Z" fill="url(#fur)"/>
+    <path d="M164 66 L170 40 L184 58 Z" fill="url(#fur)"/>
+    <path d="M167 58 L170 46 L177 56 Z" fill="#87290c"/>
+    <path d="M174 84 C182 88 192 88 200 87 C192 92 182 94 174 92 Z" fill="#ffffff"/>
+    <ellipse cx="182" cy="76" rx="4" ry="4.5" fill="#1b1b1b"/>
+    <circle cx="183.5" cy="74.5" r="1.4" fill="#ffffff"/>
+    <ellipse cx="204" cy="82" rx="4.5" ry="3.5" fill="#1b1b1b"/>
+    <circle cx="202" cy="80.5" r="1.2" fill="#5a2323"/>
+    <path d="M202 86 C194 89 186 91 180 91" stroke="#87290c" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <circle cx="220" cy="80" r="8" fill="none" stroke="#1b1b1b" stroke-width="3"/>
+    <line x1="220" y1="88" x2="220" y2="94" stroke="#1b1b1b" stroke-width="3"/>
+    <path d="M178 92 C188 88 200 84 208 82" stroke="#ea5a23" stroke-width="6" fill="none" stroke-linecap="round"/>
+    <circle cx="212" cy="81" r="4.5" fill="#ffffff"/>
+  </svg>
+</div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

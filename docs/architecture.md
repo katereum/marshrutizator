@@ -66,7 +66,7 @@ Backend API (FastAPI)
 |---|---|---|
 | Язык | Python 3.12 | Лучшая экосистема для Excel (`openpyxl`), гео (`geopy`, haversine), кластеризации (`scikit-learn`), оптимизации (`scipy`, в перспективе `ortools`). Ядро — вычисления. |
 | Backend | FastAPI + Pydantic v2 | Типизация на границе, авто-OpenAPI, асинхронная загрузка файлов, простая интеграция с Python-ядром. |
-| Frontend | React 18 + TypeScript + Vite | Типизированный минимальный SPA; стилизация — CSS/Tailwind под заданный градиент. |
+| Frontend | Статический HTML/CSS/JS, отдаётся FastAPI (MVP) | ТЗ §25: Landing максимально простой; без npm/сборки. React/Vite — кандидат на будущее. |
 | Excel | `openpyxl` | Чтение и запись `.xlsx` с сохранением шаблона/стилей заголовка (заполняем существующий лист). |
 | Кластеризация | DBSCAN (sklearn) с метрикой Haversine | Не требует заданного числа кластеров, устойчив к выбросам. Fallback — строковая кластеризация по нормализованному адресу. |
 | Порядок внутри дня | Greedy nearest-neighbor + 2-opt | Достаточно для MVP; за интерфейсом `RouteSolver`, заменяемо на OR-Tools. |
@@ -79,6 +79,8 @@ Backend API (FastAPI)
 - **k-means вместо DBSCAN** — откл.: требует число кластеров, чувствителен к форме и выбросам.
 - **OR-Tools сразу** — откл. для MVP: усложняет деплой; интерфейс сохранён для замены.
 - **pandas** — опционален; для MVP достаточно `openpyxl` (меньше зависимостей).
+- **React/Vite для лендинга** — отложен: ТЗ §25 требует минимальный лендинг,
+  а npm/сборка недоступны в песочнице. MVP — статический HTML/CSS/JS от FastAPI.
 
 ## 5. Модель данных
 
@@ -216,17 +218,15 @@ Frontend показывает состояния по этому же списк
 ```
 marshrutizator-3.0/
 ├── docs/            # plan.md, architecture.md, specification.md, algorithm.md
-├── backend/         # FastAPI: роуты, контроллеры задач, DI
-├── optimizer/       # ядро: Stage A (assignment) + Stage B (routing) — без веб-зависимостей
-├── parser/          # ExcelParser, FileValidator
-├── normalizer/      # DataNormalizer
-├── geocoder/        # Geocoder protocol + провайдеры
-├── clusterer/       # DBSCAN / address-based
-├── exporter/        # ExcelExporter
-├── validator/       # ResultValidator
-├── templates/       # эталонный шаблон маршрутного листа
-├── tests/           # pytest + hypothesis
-├── sample-data/     # тестовые Excel (Тест №1–8 из раздела 38)
+├── backend/         # FastAPI: роуты, JobStore, схемы, ошибки
+├── optimizer/       # ядро: модели, нормализация, календарь, визиты, кластеризация, Stage A/B, валидация
+├── parser/          # ExcelParser, FileValidator (openpyxl)
+├── geocoder/        # Geocoder protocol + Yandex + offline
+├── exporter/        # ExcelExporter + GeoJSON
+├── frontend/        # статический лендинг (HTML/CSS/JS), отдаётся FastAPI
+├── tests/           # unittest
+├── sample_data/     # демо-файлы .xlsx + генератор
+├── requirements.txt
 ├── .env.example
 └── README.md
 ```
