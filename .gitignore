@@ -1,0 +1,51 @@
+# ─── Переменные окружения ──────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ─── Node / Frontend ───────────────────────────────────────────
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+.eslintcache
+.next/
+.nuxt/
+
+# ─── Логи и временные файлы ────────────────────────────────────
+*.log
+logs/
+*.tmp
+*.temp
+
+# ─── OS ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── IDE / редакторы ───────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ─── Агент / Codewhale (рантайм-состояние) ─────────────────────
+.codewhale/state/
