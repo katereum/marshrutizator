@@ -41,6 +41,28 @@ class TestRouting(unittest.TestCase):
         self.assertEqual(set(order), set(pts.keys()))
         self.assertEqual(order[0], "p0#0")
 
+    def test_order_uses_road_distance_not_haversine(self):
+        # По воздуху p0 близко к p1, но по дорогам (например, из-за реки) — к p2.
+        pts = {
+            "p0#0": Point(id="p0", trade_rep_code="T", frequency=1, latitude=55.75, longitude=37.61),
+            "p1#0": Point(id="p1", trade_rep_code="T", frequency=1, latitude=55.751, longitude=37.611),
+            "p2#0": Point(id="p2", trade_rep_code="T", frequency=1, latitude=55.90, longitude=37.90),
+        }
+
+        def road(a: str, b: str) -> float:
+            key = frozenset((a.rsplit("#", 1)[0], b.rsplit("#", 1)[0]))
+            return {
+                frozenset(("p0", "p2")): 0.5,   # по дороге близко
+                frozenset(("p0", "p1")): 9.0,   # по дороге далеко
+                frozenset(("p1", "p2")): 5.0,
+            }.get(key, 0.0)
+
+        order = order_day(list(pts.keys()), pts, dist=road)
+        self.assertEqual(set(order), set(pts.keys()))
+        # Ближайший к старту по дороге — p2, а не p1 (который ближе по воздуху).
+        self.assertEqual(order[0], "p0#0")
+        self.assertEqual(order[1], "p2#0")
+
 
 if __name__ == "__main__":
     unittest.main()

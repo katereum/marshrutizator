@@ -5,21 +5,25 @@ from typing import Optional, Protocol
 
 
 class RoadDistanceProvider(Protocol):
-    def matrix(self, points: list[tuple[float, float]]) -> Optional[list[list[float]]]:
-        """Возвращает матрицу расстояний в км (n x n) или None при ошибке."""
+    def matrix(
+        self,
+        origins: list[tuple[float, float]],
+        destinations: list[tuple[float, float]],
+    ) -> Optional[list[list[float]]]:
+        """Возвращает матрицу origins x destinations в км или None при ошибке."""
         ...
 
 
-def distances_to_km(distances: list, n: int) -> Optional[list[list[float]]]:
+def distances_to_km(distances: list, rows: int, cols: int) -> Optional[list[list[float]]]:
     """Преобразует матрицу в метрах (список списков) в км.
 
     Возвращает None, если матрица неполная или содержит пропуски.
     """
-    if not distances or len(distances) != n:
+    if not distances or len(distances) != rows:
         return None
-    matrix = [[0.0] * n for _ in range(n)]
+    matrix = [[0.0] * cols for _ in range(rows)]
     for i, row in enumerate(distances):
-        if len(row) != n:
+        if len(row) != cols:
             return None
         for j, value in enumerate(row):
             if value is None:

@@ -1,12 +1,21 @@
 """Stage A — распределение визитов по рабочим дням (разделы 16, 18–19 ТЗ).
 
-Подход (greedy + repair, см. docs/algorithm.md §2.3–2.4):
-1. Каждый слот-визит кладётся в свой «идеальный» день (равномерная раскладка
-   цикличности — приоритет №3).
-2. Ремонт балансировки: пока разброс нагрузки по дням > 1, переносим визит из
-   самого загруженного дня в самый незагруженный, предпочитая день, где уже
-   есть тот же кластер (география, приоритет №2) и ближе к идеальному дню
-   (сохраняем цикличность). Гарантирует разброс нагрузки ≤ 1.
+Подход — географический жадный + ремонт баланса (см. docs/algorithm.md §2.3–2.4):
+
+1. Сначала обрабатываются «якоря» — точки с большей частотой (они задают
+   разнесённые по месяцу дни), затем остальные точки в пространственном порядке
+   (развёртка «запад→восток») группируются вокруг ближайших якорей. Так день
+   превращается в компактный «район», а точки с частотой >1 обслуживаются в
+   своих же районах, а не в одиночных дальних выездах.
+2. Каждый слот-визит кладётся в день, минимизирующий дорожное расстояние до уже
+   назначенных точек этого дня (плюс мягкое предпочтение «идеального» дня для
+   сохранения цикличности).
+3. Ремонт балансировки: пока разброс нагрузки по дням > 1, переносим визит из
+   самого загруженного дня в самый незагруженный, выбирая перенос с минимальным
+   ущербом для географии и цикличности. Гарантирует разброс нагрузки ≤ 1.
+
+Без дорожной матрицы (`dist_fn is None`) алгоритм вырождается в прежнее
+распределение по идеальному дню + балансировку — поведение совместимо.
 """
 from __future__ import annotations
 
@@ -24,51 +33,147 @@ def ideal_day(slot: int, frequency: int, n_days: int) -> int:
     return round(slot * (n_days - 1) / (frequency - 1))
 
 
-def assign_days(visits: list[Visit], n_days: int) -> tuple[list[list[str]], list[int]]:
-    """Распределяет визиты по дням. Возвращает (day_visits, load)."""
+def _estimate_scale(dist_fn, point_ids) -> float:
+    """Оценка характерного дорожного расстояния между точками (медиана NN).
+
+    Используется как масштаб для веса цикличности и стоимости «пустого дня».
+    Без dist_fn возвращает 1.0 (география не участвует).
+    """
+    if dist_fn is None:
+        return 1.0
+    ids = list(point_ids)
+    if len(ids) < 2:
+        return 1.0
+
+    # Детерминированная выборка, чтобы оценка оставалась O(n^2) в худшем случае.
+    if len(ids) > 200:
+        step = len(ids) / 200.0
+        sample = [ids[int(i * step)] for i in range(200)]
+    else:
+        sample = ids
+
+    nearest = []
+    for a in sample:
+        best = None
+        for b in sample:
+            if a == b:
+                continue
+            d = dist_fn(a, b)
+            if d is not None and (best is None or d < best):
+                best = d
+        if best is not None:
+            nearest.append(best)
+
+    if not nearest:
+        return 1.0
+    nearest.sort()
+    return nearest[len(nearest) // 2]
+
+
+def assign_days(
+    visits: list[Visit],
+    n_days: int,
+    dist_fn=None,
+    coords: dict[str, tuple[float, float]] | None = None,
+) -> tuple[list[list[str]], list[int]]:
+    """Распределяет визиты по дням. Возвращает (day_visits, load).
+
+    `dist_fn(a, b) -> км` — дорожное расстояние между точками (опционально);
+    `coords` — {point_id: (lat, lon)} для пространственного порядка.
+    """
     if n_days < 1:
         raise ValueError("n_days должен быть >= 1")
+
     total = len(visits)
     if total == 0:
         return [[] for _ in range(n_days)], [0] * n_days
 
-    frequency: dict[str, int] = {}
+    by_point: dict[str, list[Visit]] = {}
     for v in visits:
-        frequency[v.point_id] = frequency.get(v.point_id, 0) + 1
+        by_point.setdefault(v.point_id, []).append(v)
+    freq = {pid: len(vs) for pid, vs in by_point.items()}
     visit_info = {v.visit_id: v for v in visits}
 
-    day_visits: list[list[str]] = [[] for _ in range(n_days)]
+    points = list(by_point.keys())
+    if coords is not None and all(coords.get(p) for p in points):
+        # Сначала «якоря» — точки с большей частотой: они задают разнесённые по
+        # месяцу дни, вокруг которых затем группируются соседние точки (частота 1).
+        # Вторично — пространственная развёртка (запад→восток).
+        order = sorted(points, key=lambda p: (-freq[p], coords[p][1], coords[p][0], p))
+    else:
+        order = sorted(points, key=lambda p: (-freq[p], p))
+
+    cap = (total + n_days - 1) // n_days  # потолок нагрузки на день
+    scale = _estimate_scale(dist_fn, points)
+    seed_km = 2.0 * scale      # стоимость начала нового (пустого) дня
+    cycle_weight = scale       # вес цикличности, в «километрах»
+
     day_points: list[set[str]] = [set() for _ in range(n_days)]
-    day_clusters: list[set[int]] = [set() for _ in range(n_days)]
+    day_visits: list[list[str]] = [[] for _ in range(n_days)]
     load = [0] * n_days
+    medoid: list[str | None] = [None] * n_days
 
-    # 1. Начальное размещение по идеальному дню.
-    for v in visits:
-        d = ideal_day(v.slot_index, frequency[v.point_id], n_days)
-        day_visits[d].append(v.visit_id)
-        day_points[d].add(v.point_id)
-        day_clusters[d].add(v.cluster_id)
-        load[d] += 1
+    def day_cost(pid: str, d: int) -> float:
+        if dist_fn is None:
+            return 0.0
+        m = medoid[d]
+        if m is None:
+            return seed_km
+        v = dist_fn(pid, m)
+        return seed_km if v is None else v
 
-    # 2. Ремонт балансировки с сохранением цикличности (и географии).
+    def cycle_penalty(pid: str, slot: int, f: int, d: int) -> float:
+        if f < 2:
+            return 0.0
+        ideal = ideal_day(slot, f, n_days)
+        return abs(d - ideal) / max(1, n_days - 1)
+
+    # 1. Географическое размещение.
+    for pid in order:
+        f = freq[pid]
+        chosen: set[int] = set()
+        for v in by_point[pid]:
+            best_d = None
+            best_key = None
+            for d in range(n_days):
+                if d in chosen or load[d] >= cap:
+                    continue
+                cost = day_cost(pid, d) + cycle_weight * cycle_penalty(pid, v.slot_index, f, d)
+                key = (cost, load[d], d)
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best_d = d
+            if best_d is None:
+                # Все непустые дни заполнены или уже заняты точкой — берём
+                # наименее загруженный свободный день.
+                best_d = min((d for d in range(n_days) if d not in chosen), key=lambda d: load[d])
+
+            chosen.add(best_d)
+            day_points[best_d].add(pid)
+            day_visits[best_d].append(v.visit_id)
+            load[best_d] += 1
+            if medoid[best_d] is None:
+                medoid[best_d] = pid
+
+    # 2. Ремонт балансировки (разброс нагрузки ≤ 1), минимальный ущерб географии.
     max_iter = max(1, total * n_days * 10)
     for _ in range(max_iter):
         o = load.index(max(load))
         under = [u for u in range(n_days) if load[u] <= load[o] - 2]
         if not under:
-            break  # разброс нагрузки <= 1
+            break
 
-        # Лучший перенос: минимальный ущерб цикличности (|u - ideal|),
-        # затем кластерная связность, затем наименее загруженный день.
         best = None  # (key, vid, u)
         for vid in day_visits[o]:
             v = visit_info[vid]
-            ideal = ideal_day(v.slot_index, frequency[v.point_id], n_days)
+            pid = v.point_id
+            ideal = ideal_day(v.slot_index, freq[pid], n_days)
             for u in under:
-                if v.point_id in day_points[u]:
-                    continue  # не два визита одной точки в один день
-                cluster_match = 0 if v.cluster_id in day_clusters[u] else 1
-                key = (abs(u - ideal), cluster_match, load[u], u)
+                if pid in day_points[u]:
+                    continue  # одна точка не должна быть дважды в один день
+                geo = day_cost(pid, u)
+                cycle_delta = max(0.0, abs(u - ideal) - abs(o - ideal)) / max(1, n_days - 1)
+                key = (geo + cycle_weight * cycle_delta, load[u], u)
                 if best is None or key < best[0]:
                     best = (key, vid, u)
 
@@ -79,12 +184,17 @@ def assign_days(visits: list[Visit], n_days: int) -> tuple[list[list[str]], list
             _, vid, u = best
 
         v = visit_info[vid]
+        pid = v.point_id
         day_visits[o].remove(vid)
         day_visits[u].append(vid)
-        day_points[o].discard(v.point_id)
-        day_points[u].add(v.point_id)
-        day_clusters[u].add(v.cluster_id)
+        day_points[o].discard(pid)
+        day_points[u].add(pid)
         load[o] -= 1
         load[u] += 1
+
+        if medoid[o] == pid:
+            medoid[o] = next(iter(day_points[o]), None)
+        if medoid[u] is None:
+            medoid[u] = pid
 
     return day_visits, load

@@ -65,6 +65,52 @@ class TestPipeline(unittest.TestCase):
         # Один рабочий день: дом -> p0 -> p1 -> дом, каждое плечо по 1 км.
         self.assertEqual(r.stats.total_km, 3.0)
 
+    def test_geographic_assignment_keeps_districts_on_same_day(self):
+        from optimizer.models import HOME_ID
+
+        # Два района: запад (близко к дому) и восток (далеко).
+        pts = []
+        for i in range(4):
+            pts.append(Point(id=f"w{i}", trade_rep_code="T", frequency=1,
+                             latitude=55.75, longitude=37.40 + i * 0.001))
+        for i in range(4):
+            pts.append(Point(id=f"e{i}", trade_rep_code="T", frequency=1,
+                             latitude=55.75, longitude=37.90 + i * 0.001))
+
+        nodes = [p.id for p in pts] + [HOME_ID]
+
+        def road(a, b):
+            if a == b:
+                return 0.0
+            aw, bw = a.startswith("w"), b.startswith("w")
+            if HOME_ID in (a, b):
+                other = a if b == HOME_ID else b
+                return 1.0 if other.startswith("w") else 50.0
+            return 1.0 if aw == bw else 50.0
+
+        road_matrix = {(a, b): road(a, b) for a in nodes for b in nodes}
+        r = build_route(
+            pts,
+            date(2026, 9, 1),
+            date(2026, 9, 2),
+            home=(55.75, 37.40),
+            road_matrix=road_matrix,
+        )
+
+        # Два рабочих дня, 8 точек. Каждый день должен целиком лежать в одном районе.
+        self.assertEqual(len(r.days), 2)
+        for day in r.days:
+            ids = {vid.rsplit("#", 1)[0] for vid in day.ordered_visits}
+            self.assertTrue(
+                all(x.startswith("w") for x in ids) or all(x.startswith("e") for x in ids),
+                f"день смешал районы: {ids}",
+            )
+
+        # Итоговый пробег меньше, чем при смешанном распределении (запад+восток
+        # в одном дне). Проверяем, что восток уехал в отдельный день с одной
+        # дальней дорогой туда и одной обратно.
+        self.assertLess(r.stats.total_km, 4 * 50.0 + 4 * 50.0)
+
 
 if __name__ == "__main__":
     unittest.main()

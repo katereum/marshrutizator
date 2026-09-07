@@ -13,9 +13,13 @@ class ChainRoadDistance(RoadDistanceProvider):
     def __init__(self, providers: list[RoadDistanceProvider]):
         self.providers = list(providers)
 
-    def matrix(self, points: list[tuple[float, float]]) -> Optional[list[list[float]]]:
+    def matrix(
+        self,
+        origins: list[tuple[float, float]],
+        destinations: list[tuple[float, float]],
+    ) -> Optional[list[list[float]]]:
         for provider in self.providers:
-            matrix = provider.matrix(points)
+            matrix = provider.matrix(origins, destinations)
             if matrix is not None:
                 return matrix
         logger.warning("All road distance providers failed; falling back to haversine")

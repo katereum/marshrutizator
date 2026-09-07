@@ -5,7 +5,8 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 
-from backend.app import app, store
+from backend.app import _build_road_matrix, app, store
+from optimizer.models import Point
 from parser.columns import PLANNING_COLUMNS, RESULT_COLUMNS
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -58,13 +59,14 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         tid = r.json()["file_id"]
 
-        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road:
+        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road, patch("backend.app.route_geometry") as mock_route_geo:
             mock_geo.geocode.return_value = (55.75, 37.61)
             mock_road.matrix.return_value = [
                 [0.0, 1.0, 1.0],
                 [1.0, 0.0, 1.0],
                 [1.0, 1.0, 0.0],
             ]
+            mock_route_geo.route.return_value = None
             r = self.client.post(
                 "/api/optimize",
                 json={
@@ -109,9 +111,10 @@ class TestAPI(unittest.TestCase):
         )
         tid = r.json()["file_id"]
 
-        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road:
+        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road, patch("backend.app.route_geometry") as mock_route_geo:
             mock_geo.geocode.return_value = (55.75, 37.61)
             mock_road.matrix.return_value = None
+            mock_route_geo.route.return_value = None
             r = self.client.post(
                 "/api/optimize",
                 json={
@@ -143,6 +146,30 @@ class TestAPI(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["error"]["code"], "FILE_ERROR")
+
+
+class TestBuildRoadMatrix(unittest.TestCase):
+    def test_chunks_requests_by_road_matrix_chunk(self):
+        points = [
+            Point(id=f"p{i}", trade_rep_code="T", frequency=1,
+                  latitude=55.0 + i * 0.01, longitude=37.0 + i * 0.01)
+            for i in range(3)
+        ]
+        calls = []
+
+        def fake_matrix(origins, destinations):
+            calls.append((len(origins), len(destinations)))
+            return [[0.0 if o == d else 1.0 for d in destinations] for o in origins]
+
+        with patch.dict("os.environ", {"ROAD_MATRIX_CHUNK": "2"}), \
+                patch("backend.app.road_distance") as mock_road:
+            mock_road.matrix.side_effect = fake_matrix
+            matrix = _build_road_matrix(points, None)
+
+        # 3 точки при размере блока 2 → блоки [2, 1], итого 4 запроса.
+        self.assertEqual(calls, [(2, 2), (2, 1), (1, 2), (1, 1)])
+        self.assertEqual(len(matrix), 3 * 3)
+        self.assertEqual(matrix[("p0", "p2")], 1.0)
 
 
 if __name__ == "__main__":

@@ -89,7 +89,8 @@ def build_route(
     cluster = cluster_points(points, eps_km, node_distance)
     visits, warnings = expand_visits(points, n_days, cluster)
 
-    day_visits, load = assign_days(visits, n_days)
+    coords = {p.id: (p.latitude, p.longitude) for p in points if p.has_coords}
+    day_visits, load = assign_days(visits, n_days, dist_fn=node_distance, coords=coords)
 
     point_by_id = {p.id: p for p in points}
     points_by_visit = {v.visit_id: point_by_id[v.point_id] for v in visits}

@@ -24,6 +24,9 @@ const statusBox = el("status");
 const resultBox = el("result");
 const mapSection = el("map-section");
 
+// Прогресс обработки для машинки (0..1); реальную реализацию ставит блок с машинкой.
+let setCarProgress = function () {};
+
 function setStatus(text, isError = false) {
   statusBox.classList.remove("hidden");
   statusBox.classList.toggle("error", isError);
@@ -93,6 +96,33 @@ function formatDayLabel(iso, weekday) {
   return `${d}.${m}.${y}${name ? " · " + name : ""}`;
 }
 
+const MONTHS_SHORT = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+
+function shortDate(iso) {
+  const d = new Date(iso + "T00:00:00");
+  return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`;
+}
+
+function formatWeekLabel(week, dates) {
+  const sorted = [...dates].sort();
+  return `Неделя ${week} · ${shortDate(sorted[0])} – ${shortDate(sorted[sorted.length - 1])}`;
+}
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+function fitMap(map, bounds) {
+  if (!bounds || !bounds.length) return;
+  try {
+    map.fitBounds(bounds, { padding: [16, 16] });
+  } catch (err) {
+    console.error("fitBounds error:", err);
+  }
+}
+
 function renderMap(jobId) {
   fetch(`/api/result/${jobId}/geojson`)
     .then((r) => r.json())
@@ -106,12 +136,20 @@ function renderMap(jobId) {
       if (!mapInstance) {
         mapInstance = L.map("map");
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
           attribution: "© OpenStreetMap",
         }).addTo(mapInstance);
+        // Дефолтный центр (Москва), чтобы карта не осталась пустой до fitBounds.
+        mapInstance.setView([55.7558, 37.6173], 10);
       }
       const map = mapInstance;
+      map.invalidateSize();
 
-      // Убираем старые маршрутные линии (тайлы не трогаем).
+      // Разделяем линии маршрутов и точки-маркеры.
+      const routeFeatures = features.filter((f) => f.geometry && f.geometry.type === "LineString");
+      const pointFeatures = features.filter((f) => f.geometry && f.geometry.type === "Point");
+
+      // Убираем старые слои (тайлы не трогаем).
       map.eachLayer((layer) => {
         if (!(layer instanceof L.TileLayer)) {
           map.removeLayer(layer);
@@ -119,57 +157,105 @@ function renderMap(jobId) {
       });
 
       const layersByDate = {};
+      const layersByWeek = {};
       const boundsByDate = {};
-      const allBounds = [];
+      const boundsByWeek = {};
       const weekdayByDate = {};
+      const datesInWeek = {};
+      const routeBounds = [];
 
-      features.forEach((f) => {
+      routeFeatures.forEach((f) => {
         const date = f.properties.date;
+        const week = f.properties.week;
         const line = f.geometry.coordinates.map((c) => [c[1], c[0]]);
         const layer = L.polyline(line, { color: "#7c3aed", weight: 3 }).bindPopup(
           `${f.properties.employee || ""} · ${formatDayLabel(date, f.properties.weekday)}`
         );
 
-        if (!layersByDate[date]) layersByDate[date] = [];
-        if (!boundsByDate[date]) boundsByDate[date] = [];
+        if (!layersByDate[date]) { layersByDate[date] = []; boundsByDate[date] = []; }
+        if (!layersByWeek[week]) { layersByWeek[week] = []; boundsByWeek[week] = []; datesInWeek[week] = []; }
         layersByDate[date].push(layer);
         boundsByDate[date].push(...line);
-        allBounds.push(...line);
+        layersByWeek[week].push(layer);
+        boundsByWeek[week].push(...line);
+        if (!datesInWeek[week].includes(date)) datesInWeek[week].push(date);
         weekdayByDate[date] = f.properties.weekday;
+        routeBounds.push(...line);
       });
 
+      // Точки — всегда видимые маркеры с подсказкой по наведению.
+      const pointsLayer = L.layerGroup();
+      const pointsBounds = [];
+      pointFeatures.forEach((p) => {
+        const [lon, lat] = p.geometry.coordinates;
+        const marker = L.circleMarker([lat, lon], {
+          radius: 5,
+          color: "#ffffff",
+          weight: 1.5,
+          fillColor: "#d62828",
+          fillOpacity: 1,
+        });
+        marker.bindTooltip(
+          `<span class="pt-code">${escapeHtml(p.properties.code)}</span>` +
+          `<span class="pt-addr">${escapeHtml(p.properties.address)}</span>`,
+          { direction: "top", offset: [0, -6], className: "point-tooltip", opacity: 1 }
+        );
+        pointsLayer.addLayer(marker);
+        pointsBounds.push([lat, lon]);
+      });
+      pointsLayer.addTo(map);
+
+      // Наполняем селектор: все / по дням / по неделям.
       const dates = Object.keys(layersByDate).sort();
-      const select = el("day-select");
-      select.innerHTML = '<option value="all">Все дни</option>' +
-        dates.map((d) =>
-          `<option value="${d}">${formatDayLabel(d, weekdayByDate[d])}</option>`
-        ).join("");
+      const weeks = Object.keys(layersByWeek).sort((a, b) => a - b);
+      const select = el("view-select");
+      select.innerHTML =
+        '<option value="all">Все дни</option>' +
+        '<optgroup label="По дням">' +
+        dates.map((d) => `<option value="${d}">${formatDayLabel(d, weekdayByDate[d])}</option>`).join("") +
+        '</optgroup>' +
+        '<optgroup label="По неделям">' +
+        weeks.map((w) => `<option value="week:${w}">${formatWeekLabel(w, datesInWeek[w])}</option>`).join("") +
+        '</optgroup>';
       select.value = "all";
 
       dates.forEach((d) => layersByDate[d].forEach((l) => l.addTo(map)));
-      if (allBounds.length) map.fitBounds(allBounds);
+      const allBounds = [...pointsBounds, ...routeBounds];
+      fitMap(map, allBounds);
 
       select.onchange = () => {
         const value = select.value;
-        dates.forEach((d) => {
-          layersByDate[d].forEach((l) => {
-            const show = value === "all" || value === d;
-            if (show && !map.hasLayer(l)) l.addTo(map);
-            if (!show && map.hasLayer(l)) map.removeLayer(l);
-          });
-        });
-        const target = value === "all" ? allBounds : boundsByDate[value];
-        if (target && target.length) map.fitBounds(target);
+        dates.forEach((d) => layersByDate[d].forEach((l) => {
+          if (map.hasLayer(l)) map.removeLayer(l);
+        }));
+
+        let target = pointsBounds;
+        if (value === "all") {
+          dates.forEach((d) => layersByDate[d].forEach((l) => l.addTo(map)));
+          target = allBounds;
+        } else if (value.startsWith("week:")) {
+          const w = value.slice(5);
+          (layersByWeek[w] || []).forEach((l) => l.addTo(map));
+          target = [...pointsBounds, ...(boundsByWeek[w] || [])];
+        } else {
+          (layersByDate[value] || []).forEach((l) => l.addTo(map));
+          target = [...pointsBounds, ...(boundsByDate[value] || [])];
+        }
+        if (target.length) fitMap(map, target);
       };
     })
-    .catch(() => {});
+    .catch((err) => console.error("Ошибка отрисовки карты:", err));
 }
 
 function runStageSequence() {
   let i = 0;
+  setCarProgress(0);
   const timer = setInterval(() => {
     if (i < STAGES.length) {
       setStatus(STAGES[i]);
+      // Машинка едет вправо по мере прохождения этапов (до 80% — финальный
+      // рывок происходит по факту готовности маршрута).
+      setCarProgress(0.8 * ((i + 1) / STAGES.length));
       i += 1;
     } else {
       clearInterval(timer);
@@ -203,6 +289,8 @@ optimizeBtn.addEventListener("click", async () => {
     state.jobId = job_id;
     stopStages();
     setStatus("Маршрут готов!");
+    setCarProgress(1);
+    setTimeout(() => setCarProgress(0), 2600);
     resultBox.classList.remove("hidden");
     el("download-link").href = `/api/download/${job_id}`;
     renderMap(job_id);
@@ -220,50 +308,41 @@ optimizeBtn.addEventListener("click", async () => {
       .catch(() => {});
   } catch (err) {
     stopStages();
+    setCarProgress(0);
     setStatus(err.message, true);
   }
 });
 
-// Кабриолет катается по сайту: дрейфует и разворачивается по направлению движения.
+// Кабриолет с лисом ездит только по красному фону (hero) слева направо,
+// отражая прогресс формирования маршрута, и возвращается на место.
 (function () {
   const car = document.getElementById("car");
-  if (!car) return;
+  const hero = document.querySelector(".hero");
+  if (!car || !hero) return;
 
-  const MAX_SPEED = 3.2;
-  const MIN_SPEED = 1.0;
+  const state = { target: 0, shown: 0 };
 
-  let x = window.innerWidth * 0.2;
-  let y = window.innerHeight * 0.75;
-  let vx = 1.6;
-  let vy = 0.4;
+  window.setCarProgress = function (p) {
+    state.target = Math.max(0, Math.min(1, Number(p) || 0));
+  };
+  setCarProgress = window.setCarProgress;
 
   function tick() {
-    vx += (Math.random() - 0.5) * 0.4;
-    vy += (Math.random() - 0.5) * 0.4;
+    // Плавное сглаживание к целевому прогрессу.
+    state.shown += (state.target - state.shown) * 0.08;
+    if (Math.abs(state.target - state.shown) < 0.0005) state.shown = state.target;
 
-    const speed = Math.hypot(vx, vy);
-    if (speed > MAX_SPEED) {
-      vx = (vx / speed) * MAX_SPEED;
-      vy = (vy / speed) * MAX_SPEED;
-    } else if (speed < MIN_SPEED) {
-      const s = speed || 1;
-      vx = (vx / s) * MIN_SPEED;
-      vy = (vy / s) * MIN_SPEED;
-    }
+    const rect = hero.getBoundingClientRect();
+    const carW = car.offsetWidth || 200;
+    const carH = car.offsetHeight || 90;
+    const pad = 14;
 
-    x += vx;
-    y += vy;
+    const minX = rect.left + pad;
+    const maxX = rect.right - carW - pad;
+    const y = rect.bottom - carH - pad;
+    const x = minX + (maxX - minX) * state.shown;
 
-    const w = car.offsetWidth;
-    const h = car.offsetHeight;
-    if (x < 0) { x = 0; vx = Math.abs(vx); }
-    if (x > window.innerWidth - w) { x = window.innerWidth - w; vx = -Math.abs(vx); }
-    if (y < 0) { y = 0; vy = Math.abs(vy); }
-    if (y > window.innerHeight - h) { y = window.innerHeight - h; vy = -Math.abs(vy); }
-
-    const dir = vx < 0 ? -1 : 1;
-    car.style.transform = `translate3d(${x}px, ${y}px, 0) scaleX(${dir})`;
-
+    car.style.transform = `translate3d(${x}px, ${y}px, 0)`;
     requestAnimationFrame(tick);
   }
 

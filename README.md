@@ -19,6 +19,29 @@ cp .env.example .env          # вписать YANDEX_GEOCODER_API_KEY и др.
 | `.venv/bin/python -m unittest discover -s tests -t .` | запуск тестов |
 | `.venv/bin/uvicorn backend.app:app --reload` | dev-сервер |
 | `PYTHONPATH=. .venv/bin/python sample_data/make_samples.py` | демо-файлы Excel |
+| `./scripts/setup_osrm.sh build && ./scripts/setup_osrm.sh start` | локальный OSRM (дороги, без Яндекс) |
+
+## Дорожная маршрутизация (не «по воздуху»)
+
+Маршруты строятся по дорогам, а не по прямой. Для этого используются дорожные
+расстояния (matrix) — для кластеризации и порядка точек — и дорожная геометрия
+(route) — чтобы линия на карте шла по улицам.
+
+Предпочтительный источник — **self-hosted OSRM** (без ключа, без внешних
+лимитов, не троттлит). Поднимите его локально:
+
+```bash
+brew install osrm-backend          # или: ./scripts/setup_osrm.sh install
+./scripts/setup_osrm.sh build      # скачает экстракт Москвы и построит граф
+./scripts/start.sh                 # OSRM + backend одной командой
+```
+
+Затем в `.env` укажите `OSRM_BASE_URL=http://localhost:5000` (или список через
+запятую: `http://localhost:5000,https://router.project-osrm.org` — тогда при
+выключенной локалке дороги возьмутся у публичного демо). OSRM — первый источник
+дорог, а Яндекс.Маршрутизация/GraphHopper/OpenRouteService — резервные. Если
+OSRM недоступен, ядро откатывается на следующий провайдер; геометрия линии на
+карте при отсутствии дорог деградирует до прямой.
 
 ## Структура
 

@@ -286,6 +286,41 @@ body {
 
 #map { height: 420px; border-radius: 12px; }
 
+/* Подсказка над точкой — компактная карточка с кодом и адресом. */
+.leaflet-tooltip.point-tooltip {
+  padding: 6px 8px;
+  background: #ffffff;
+  border: 1px solid #fdeaea;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(17, 17, 17, 0.14);
+  color: #111;
+}
+.leaflet-tooltip.point-tooltip::before {
+  display: none;
+}
+.point-tooltip .pt-code {
+  display: block;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  color: var(--red);
+}
+.point-tooltip .pt-addr {
+  display: block;
+  font-size: 12px;
+  color: #475569;
+  margin-top: 2px;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.day-filter optgroup {
+  font-style: normal;
+  font-weight: 600;
+  color: #64748b;
+}
+
 .hidden { display: none; }
 
 @media (max-width: 640px) {

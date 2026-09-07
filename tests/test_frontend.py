@@ -22,7 +22,8 @@ class TestFrontend(unittest.TestCase):
         self.assertIn("Упорядочь хаос", r.text)
 
     def test_static_assets_served(self):
-        for path in ("/static/styles.css", "/static/app.js"):
+        for path in ("/static/styles.css", "/static/app.js",
+                     "/static/leaflet/leaflet.js", "/static/leaflet/leaflet.css"):
             r = self.client.get(path)
             self.assertEqual(r.status_code, 200)
 

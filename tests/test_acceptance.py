@@ -70,12 +70,13 @@ class TestAcceptance(unittest.TestCase):
         pid = self._upload("sample_data/planning.xlsx", "/api/upload/planning")
         tid = self._upload("sample_data/route_template.xlsx", "/api/upload/route-template")
 
-        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road:
+        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road, patch("backend.app.route_geometry") as mock_route_geo:
             mock_geo.geocode.side_effect = lambda address: (55.75, 37.61)
-            mock_road.matrix.side_effect = lambda coords: [
-                [0.0 if i == j else 1.0 for j in range(len(coords))]
-                for i in range(len(coords))
+            mock_road.matrix.side_effect = lambda origins, destinations: [
+                [0.0 if o == d else 1.0 for d in destinations]
+                for o in origins
             ]
+            mock_route_geo.route.return_value = None
             r = self.client.post(
                 "/api/optimize",
                 json={

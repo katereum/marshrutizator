@@ -24,6 +24,7 @@ from router import (
     OfflineRoadDistance,
     OpenRouteServiceRoadDistance,
     OsrmRoadDistance,
+    OsrmRouteGeometry,
     YandexRoadDistance,
 )
 from parser import (
@@ -52,15 +53,18 @@ geocoder = YandexGeocoder() if os.environ.get("YANDEX_GEOCODER_API_KEY") else Of
 
 _road_key = os.environ.get("YANDEX_ROUTING_API_KEY") or os.environ.get("YANDEX_GEOCODER_API_KEY")
 _road_providers = []
+# Локальный/self-hosted OSRM — первый приоритет: без ключа и внешних лимитов,
+# не троттлит в отличие от Яндекс.Маршрутизации. Ключевые провайдеры — fallback.
+if os.environ.get("OSRM_BASE_URL"):
+    _road_providers.append(OsrmRoadDistance())
 if _road_key:
     _road_providers.append(YandexRoadDistance())
 if os.environ.get("GRAPHOPPER_API_KEY"):
     _road_providers.append(GraphHopperRoadDistance())
 if os.environ.get("OPENROUTESERVICE_API_KEY"):
     _road_providers.append(OpenRouteServiceRoadDistance())
-if os.environ.get("OSRM_BASE_URL"):
-    _road_providers.append(OsrmRoadDistance())
 road_distance = ChainRoadDistance(_road_providers) if _road_providers else OfflineRoadDistance()
+route_geometry = OsrmRouteGeometry()
 
 app = FastAPI(title="Маршрутизатор 3.0")
 
@@ -109,22 +113,37 @@ def _geocode_home(address: str | None) -> tuple[float, float] | None:
 def _build_road_matrix(points: list[Point], home: tuple[float, float] | None) -> dict | None:
     """Строит матрицу дорожных расстояний по id узлов (точки + дом).
 
-    Возвращает {(id_a, id_b): км} или None (если провайдер недоступен/неполный).
+    Запросы идут блоками (ограничение провайдеров на число точек в одном
+    запросе), размер блока — ROAD_MATRIX_CHUNK (по умолчанию 45).
+    Возвращает {(id_a, id_b): км} или None, если провайдер недоступен/неполный.
     """
     nodes = [(p.id, (p.latitude, p.longitude)) for p in points if p.has_coords]
     if home is not None:
         nodes.append((HOME_ID, home))
-    if len(nodes) < 2:
+    n = len(nodes)
+    if n < 2:
         return None
 
-    matrix = road_distance.matrix([coords for _, coords in nodes])
-    if matrix is None:
-        return None
+    try:
+        chunk = max(1, int(os.environ.get("ROAD_MATRIX_CHUNK", "45")))
+    except ValueError:
+        chunk = 45
+    blocks = [nodes[i : i + chunk] for i in range(0, n, chunk)]
 
     out: dict[tuple[str, str], float] = {}
-    for i, (id_a, _) in enumerate(nodes):
-        for j, (id_b, _) in enumerate(nodes):
-            out[(id_a, id_b)] = matrix[i][j]
+    for origin_block in blocks:
+        for dest_block in blocks:
+            matrix = road_distance.matrix(
+                [coords for _, coords in origin_block],
+                [coords for _, coords in dest_block],
+            )
+            if matrix is None or len(matrix) != len(origin_block):
+                return None
+            for a, (id_a, _) in enumerate(origin_block):
+                if len(matrix[a]) != len(dest_block):
+                    return None
+                for b, (id_b, _) in enumerate(dest_block):
+                    out[(id_a, id_b)] = matrix[a][b]
     return out
 
 
@@ -145,6 +164,41 @@ async def upload_route_template(file: UploadFile = File(...)):
     validate_template_header(header)
     fid = store.add_file(content)
     return {"file_id": fid, "filename": file.filename, "columns": header}
+
+
+def _build_route_geometries(
+    results,
+    points_by_id: dict,
+    home: tuple[float, float] | None,
+) -> dict[tuple[str, str], list[list[float]]]:
+    """Строит дорожные полилинии для каждого дня маршрута.
+
+    Возвращает {(trade_rep_code, date.isoformat()): [[lon, lat], ...]}.
+    Лучшая попытка: если провайдер геометрии недоступен, день просто не попадёт
+    в словарь, и GeoJSON откатится на прямую линию.
+    """
+    geometries: dict[tuple[str, str], list[list[float]]] = {}
+    for result in results:
+        for day in result.days:
+            visit_coords = []
+            for vid in day.ordered_visits:
+                point = points_by_id.get(vid.rsplit("#", 1)[0])
+                if point is not None and point.has_coords:
+                    visit_coords.append((point.latitude, point.longitude))
+
+            coords = []
+            if home is not None:
+                coords.append(home)
+            coords.extend(visit_coords)
+            if home is not None:
+                coords.append(home)
+            if len(coords) < 2:
+                continue
+
+            line = route_geometry.route(coords)
+            if line is not None:
+                geometries[(result.trade_rep_code, day.date.isoformat())] = line
+    return geometries
 
 
 @app.post("/api/optimize", status_code=202)
@@ -173,10 +227,20 @@ def optimize(req: OptimizeRequest):
     road_matrix = _build_road_matrix(points, home)
     node_count = len(points) + (1 if home is not None else 0)
     if node_count >= 2 and road_matrix is None:
-        raise OptimizationError(
+        errors = [
+            f"{type(p).__name__}: {p.last_error}"
+            for p in getattr(road_distance, "providers", [])
+            if getattr(p, "last_error", None)
+        ]
+        message = (
             "Не удалось получить дорожную матрицу ни от одного провайдера "
-            "(Яндекс/GraphHopper/OpenRouteService/OSRM)"
+            "(OSRM/Яндекс/GraphHopper/OpenRouteService). "
+            "Если используете локальный OSRM — запустите его командой "
+            "`./scripts/setup_osrm.sh start`"
         )
+        if errors:
+            message += ": " + "; ".join(errors)
+        raise OptimizationError(message, {"providers": errors})
 
     store.update(job_id, status="OPTIMIZING")
     results = build_routes(
@@ -195,7 +259,8 @@ def optimize(req: OptimizeRequest):
         (f"{r.trade_rep_code or 'route'}.xlsx", export_route(io.BytesIO(template), r, points_by_id))
         for r in results
     ]
-    geojson = build_geojson(results, points_by_id, home=home)
+    geometries = _build_route_geometries(results, points_by_id, home)
+    geojson = build_geojson(results, points_by_id, home=home, geometries=geometries)
 
     store.update(job_id, status="COMPLETED", results=results, xlsx_files=files, geojson=geojson)
     return {"job_id": job_id}

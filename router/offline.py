@@ -7,5 +7,9 @@ from .base import RoadDistanceProvider
 
 
 class OfflineRoadDistance(RoadDistanceProvider):
-    def matrix(self, points: list[tuple[float, float]]) -> Optional[list[list[float]]]:
+    def matrix(
+        self,
+        origins: list[tuple[float, float]],
+        destinations: list[tuple[float, float]],
+    ) -> Optional[list[list[float]]]:
         return None
