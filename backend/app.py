@@ -80,15 +80,14 @@ async def _domain_error_handler(request, exc: MarshrutizatorError):
 
 def _human_address(p: Point) -> str:
     o = p.original
-    parts = [
-        o.get("Населенный пункт", ""),
-        o.get("Тип улицы", ""),
-        o.get("Название улицы", ""),
-        o.get("Номер дома", ""),
-        o.get("Номер строения", ""),
-        o.get("Номер корпуса", ""),
-    ]
-    return ", ".join(str(x) for x in parts if str(x).strip())
+
+    def s(key: str) -> str:
+        v = o.get(key)
+        return str(v).strip() if v is not None else ""
+
+    street = " ".join(x for x in [s("Тип улицы"), s("Название улицы")] if x)
+    house = " ".join(x for x in [s("Номер дома"), s("Номер строения"), s("Номер корпуса")] if x)
+    return ", ".join(x for x in [s("Населенный пункт"), street, house] if x)
 
 
 def _geocode_points(points: list[Point]) -> list[Point]:
@@ -217,11 +216,16 @@ def optimize(req: OptimizeRequest):
     points = _geocode_points(points)
     home = _geocode_home(req.home_address)
 
-    missing = [p.id for p in points if not p.has_coords]
+    missing = [p for p in points if not p.has_coords]
     if missing:
         raise OptimizationError(
-            "Не удалось геокодировать все точки — без координат невозможно построить маршрут по дорогам",
-            {"points": missing[:20], "count": len(missing)},
+            "Не удалось геокодировать все точки — без координат невозможно "
+            "построить маршрут по дорогам. Проверьте адреса и лимит геокодера.",
+            {
+                "count": len(missing),
+                "points": [{"id": p.id, "address": _human_address(p)} for p in missing[:20]],
+                "geocoder": getattr(geocoder, "last_error", None),
+            },
         )
 
     road_matrix = _build_road_matrix(points, home)

@@ -89,6 +89,46 @@ class TestAssignment(unittest.TestCase):
             days = [d for d in range(4) if any(v.startswith(anchor + "#") for v in day_visits[d])]
             self.assertEqual(len(days), 2, anchor)
 
+    def test_same_coordinates_share_day(self):
+        coords = {
+            "a": (55.75, 37.61), "b": (55.75, 37.61),
+            "c": (55.75, 37.62), "d": (55.75, 37.63),
+        }
+
+        def dist(x, y):
+            return 0.0 if coords[x] == coords[y] else 10.0
+
+        visits = [Visit(p, 0, 0) for p in ("a", "b", "c", "d")]
+        day_visits, _ = assign_days(visits, 2, dist_fn=dist, coords=coords)
+
+        days = {
+            p: {d for d in range(2) if any(v.startswith(p + "#") for v in day_visits[d])}
+            for p in coords
+        }
+        # Одинаковый адрес (одинаковые координаты) → один и тот же день.
+        self.assertEqual(days["a"], days["b"])
+
+    def test_same_coordinates_mixed_frequency(self):
+        coords = {"a": (55.75, 37.61), "b": (55.75, 37.61), "c": (55.75, 37.61)}
+
+        def dist(x, y):
+            return 0.0 if coords[x] == coords[y] else 10.0
+
+        # a частота 2, b частота 2, c частота 1 — все в одном здании.
+        visits = [
+            Visit("a", 0, 0), Visit("a", 1, 0),
+            Visit("b", 0, 0), Visit("b", 1, 0),
+            Visit("c", 0, 0),
+        ]
+        day_visits, _ = assign_days(visits, 2, dist_fn=dist, coords=coords)
+
+        days_a = {d for d in range(2) if any(v.startswith("a#") for v in day_visits[d])}
+        days_b = {d for d in range(2) if any(v.startswith("b#") for v in day_visits[d])}
+        days_c = {d for d in range(2) if any(v.startswith("c#") for v in day_visits[d])}
+        # a и b делят одни и те же дни; c (частота 1) — в одном из этих дней.
+        self.assertEqual(days_a, days_b)
+        self.assertTrue(days_c <= days_a)
+
 
 if __name__ == "__main__":
     unittest.main()
