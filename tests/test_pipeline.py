@@ -123,6 +123,13 @@ class TestPipeline(unittest.TestCase):
             self.assertEqual(r.stats.violations, [], focus)
             self.assertEqual(r.stats.total_visits, 6, focus)
 
+    def test_caps_flow(self):
+        pts = [Point(id=f"p{i}", trade_rep_code="T", frequency=1) for i in range(10)]
+        # Неделя (5 рабочих дней), лимит 3 точки в день — все помещаются.
+        r = build_route(pts, date(2026, 9, 7), date(2026, 9, 11), caps=[3, 3, 3, 3, 3])
+        self.assertEqual(r.stats.total_visits, 10)
+        self.assertTrue(all(l <= 3 for l in r.stats.per_day_load))
+
 
 if __name__ == "__main__":
     unittest.main()

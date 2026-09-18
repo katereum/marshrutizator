@@ -129,6 +129,17 @@ class TestAssignment(unittest.TestCase):
         self.assertEqual(days_a, days_b)
         self.assertTrue(days_c <= days_a)
 
+    def test_caps_respected(self):
+        visits = [Visit(f"p{i}", 0, 0) for i in range(10)]
+        day_visits, load = assign_days(visits, 3, caps=[5, 3, 2])
+        self.assertEqual(sum(load), 10)
+        self.assertTrue(all(l <= c for l, c in zip(load, [5, 3, 2])))
+
+    def test_caps_infeasible_raises(self):
+        visits = [Visit(f"p{i}", 0, 0) for i in range(10)]
+        with self.assertRaises(ValueError):
+            assign_days(visits, 3, caps=[2, 2, 2])  # сумма 6 < 10
+
 
 if __name__ == "__main__":
     unittest.main()

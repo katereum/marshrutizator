@@ -18,6 +18,7 @@ from geocoder.offline import OfflineGeocoder
 from geocoder.yandex import YandexGeocoder
 from optimizer.models import HOME_ID, Point
 from optimizer.pipeline import build_routes
+from optimizer.calendar import working_days
 from router import (
     ChainRoadDistance,
     GraphHopperRoadDistance,
@@ -247,6 +248,10 @@ def optimize(req: OptimizeRequest):
         raise OptimizationError(message, {"providers": errors})
 
     store.update(job_id, status="OPTIMIZING")
+    caps = None
+    if req.points_per_day is not None:
+        wdays = working_days(req.period_start, req.period_end, req.work_on_weekends)
+        caps = [req.points_per_day_overrides.get(d.weekday(), req.points_per_day) for d in wdays]
     results = build_routes(
         points,
         req.period_start,
@@ -256,6 +261,7 @@ def optimize(req: OptimizeRequest):
         home=home,
         road_matrix=road_matrix,
         focus=req.focus,
+        caps=caps,
     )
 
     store.update(job_id, status="EXPORTING")

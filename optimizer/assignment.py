@@ -75,11 +75,13 @@ def assign_days(
     n_days: int,
     dist_fn=None,
     coords: dict[str, tuple[float, float]] | None = None,
+    caps: list[int] | None = None,
 ) -> tuple[list[list[str]], list[int]]:
     """Распределяет визиты по дням. Возвращает (day_visits, load).
 
     `dist_fn(a, b) -> км` — дорожное расстояние между точками (опционально);
-    `coords` — {point_id: (lat, lon)} для пространственного порядка.
+    `coords` — {point_id: (lat, lon)} для пространственного порядка;
+    `caps` — макс. число точек на каждый день (len == n_days). None — авто-баланс.
     """
     if n_days < 1:
         raise ValueError("n_days должен быть >= 1")
@@ -87,6 +89,20 @@ def assign_days(
     total = len(visits)
     if total == 0:
         return [[] for _ in range(n_days)], [0] * n_days
+
+    if caps is None:
+        cap = (total + n_days - 1) // n_days
+        caps = [cap] * n_days
+        hard_caps = False
+    else:
+        caps = list(caps)
+        if len(caps) != n_days:
+            raise ValueError(f"caps: ожидалось {n_days} значений, получено {len(caps)}")
+        if sum(caps) < total:
+            raise ValueError(
+                f"Не хватает ёмкости: {total} визитов не помещаются в лимиты ({sum(caps)})"
+            )
+        hard_caps = True
 
     by_point: dict[str, list[Visit]] = {}
     for v in visits:
@@ -136,7 +152,7 @@ def assign_days(
             best_d = None
             best_key = None
             for d in range(n_days):
-                if d in chosen or load[d] >= cap:
+                if d in chosen or load[d] >= caps[d]:
                     continue
                 cost = day_cost(pid, d) + cycle_weight * cycle_penalty(pid, v.slot_index, f, d)
                 key = (cost, load[d], d)
@@ -156,45 +172,47 @@ def assign_days(
                 medoid[best_d] = pid
 
     # 2. Ремонт балансировки (разброс нагрузки ≤ 1), минимальный ущерб географии.
-    max_iter = max(1, total * n_days * 10)
-    for _ in range(max_iter):
-        o = load.index(max(load))
-        under = [u for u in range(n_days) if load[u] <= load[o] - 2]
-        if not under:
-            break
+    # При явных лимитах на день баланс уже задан лимитами — ремонт не нужен.
+    if not hard_caps:
+        max_iter = max(1, total * n_days * 10)
+        for _ in range(max_iter):
+            o = load.index(max(load))
+            under = [u for u in range(n_days) if load[u] <= load[o] - 2]
+            if not under:
+                break
 
-        best = None  # (key, vid, u)
-        for vid in day_visits[o]:
+            best = None  # (key, vid, u)
+            for vid in day_visits[o]:
+                v = visit_info[vid]
+                pid = v.point_id
+                ideal = ideal_day(v.slot_index, freq[pid], n_days)
+                for u in under:
+                    if pid in day_points[u]:
+                        continue  # одна точка не должна быть дважды в один день
+                    geo = day_cost(pid, u)
+                    cycle_delta = max(0.0, abs(u - ideal) - abs(o - ideal)) / max(1, n_days - 1)
+                    key = (geo + cycle_weight * cycle_delta, load[u], u)
+                    if best is None or key < best[0]:
+                        best = (key, vid, u)
+
+            if best is None:
+                vid = day_visits[o][0]
+                u = min(under, key=lambda x: load[x])
+            else:
+                _, vid, u = best
+
             v = visit_info[vid]
             pid = v.point_id
-            ideal = ideal_day(v.slot_index, freq[pid], n_days)
-            for u in under:
-                if pid in day_points[u]:
-                    continue  # одна точка не должна быть дважды в один день
-                geo = day_cost(pid, u)
-                cycle_delta = max(0.0, abs(u - ideal) - abs(o - ideal)) / max(1, n_days - 1)
-                key = (geo + cycle_weight * cycle_delta, load[u], u)
-                if best is None or key < best[0]:
-                    best = (key, vid, u)
+            day_visits[o].remove(vid)
+            day_visits[u].append(vid)
+            day_points[o].discard(pid)
+            day_points[u].add(pid)
+            load[o] -= 1
+            load[u] += 1
 
-        if best is None:
-            vid = day_visits[o][0]
-            u = min(under, key=lambda x: load[x])
-        else:
-            _, vid, u = best
-
-        v = visit_info[vid]
-        pid = v.point_id
-        day_visits[o].remove(vid)
-        day_visits[u].append(vid)
-        day_points[o].discard(pid)
-        day_points[u].add(pid)
-        load[o] -= 1
-        load[u] += 1
-
-        if medoid[o] == pid:
-            medoid[o] = next(iter(day_points[o]), None)
-        if medoid[u] is None:
-            medoid[u] = pid
+            if medoid[o] == pid:
+                medoid[o] = next(iter(day_points[o]), None)
+            if medoid[u] is None:
+                medoid[u] = pid
 
     return day_visits, load

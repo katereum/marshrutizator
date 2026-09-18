@@ -16,6 +16,9 @@ class OptimizeRequest(BaseModel):
     home_address: str | None = None
     # Акцент маршрута: экономия (по умолчанию) | проблемные | лучшие.
     focus: Literal["economy", "fix_problems", "top_performers"] = "economy"
+    # Кол-во точек в день: по умолчанию и по дням недели (0=Пн..6=Вс).
+    points_per_day: int | None = None
+    points_per_day_overrides: dict[int, int] = {}
     # Мягкие целевые ограничения (R3); ядро MVP балансирует к вычисленной цели.
     min_points_per_day: int | None = None
     max_points_per_day: int | None = None

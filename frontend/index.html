@@ -93,6 +93,24 @@
           <p class="home-note">Учитывает колонки «Оценка» и «Результат», если они есть в базе.</p>
         </div>
 
+        <div class="home-field">
+          <label for="planning-month">Месяц планирования</label>
+          <input type="month" id="planning-month">
+        </div>
+
+        <div class="home-field">
+          <label for="capacity-default">Точек в день (максимум)</label>
+          <input type="number" id="capacity-default" min="1" placeholder="пусто = авто">
+          <div class="weekday-grid">
+            <label>Пн <input type="number" id="cap-0" min="1" placeholder="17"></label>
+            <label>Вт <input type="number" id="cap-1" min="1" placeholder="17"></label>
+            <label>Ср <input type="number" id="cap-2" min="1" placeholder="17"></label>
+            <label>Чт <input type="number" id="cap-3" min="1" placeholder="17"></label>
+            <label>Пт <input type="number" id="cap-4" min="1" placeholder="17"></label>
+          </div>
+          <p class="home-note">Число на день недели перекрывает «по умолчанию». Пусто — авто-баланс.</p>
+        </div>
+
         <label class="upload" for="planning-file">
           <span class="upload-label" id="planning-label">Загрузить базу для планирования</span>
           <input type="file" id="planning-file" accept=".xlsx" hidden>

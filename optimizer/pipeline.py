@@ -80,6 +80,7 @@ def build_route(
     home: tuple[float, float] | None = None,
     road_matrix: dict | None = None,
     focus: str = FOCUS_ECONOMY,
+    caps: list[int] | None = None,
 ) -> RouteResult:
     """Строит месячный маршрут для набора точек одного сотрудника."""
     days = working_days(period_start, period_end, work_on_weekends)
@@ -92,7 +93,7 @@ def build_route(
     visits, warnings = expand_visits(points, n_days, cluster)
 
     coords = {p.id: (p.latitude, p.longitude) for p in points if p.has_coords}
-    day_visits, load = assign_days(visits, n_days, dist_fn=node_distance, coords=coords)
+    day_visits, load = assign_days(visits, n_days, dist_fn=node_distance, coords=coords, caps=caps)
 
     point_by_id = {p.id: p for p in points}
     points_by_visit = {v.visit_id: point_by_id[v.point_id] for v in visits}
@@ -151,6 +152,7 @@ def build_routes(
     home: tuple[float, float] | None = None,
     road_matrix: dict | None = None,
     focus: str = FOCUS_ECONOMY,
+    caps: list[int] | None = None,
 ) -> list[RouteResult]:
     """Строит маршруты, разбивая базу по `Код торгового представителя` (R2)."""
     groups: dict[str, list[Point]] = {}
@@ -171,6 +173,7 @@ def build_routes(
                 home=home,
                 road_matrix=road_matrix,
                 focus=focus,
+                caps=caps,
             )
         )
     return results

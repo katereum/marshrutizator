@@ -27,6 +27,12 @@ const mapSection = el("map-section");
 // Прогресс обработки для машинки (0..1); реальную реализацию ставит блок с машинкой.
 let setCarProgress = function () {};
 
+// Месяц по умолчанию — следующий календарный.
+(function () {
+  const p = nextMonthPeriod();
+  el("planning-month").value = p.start.slice(0, 7);
+})();
+
 function setStatus(text, isError = false) {
   statusBox.classList.remove("hidden");
   statusBox.classList.toggle("error", isError);
@@ -82,6 +88,31 @@ function nextMonthPeriod() {
   const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   return { start: iso(start), end: iso(end) };
+}
+
+function iso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function currentPeriod() {
+  const v = el("planning-month").value;  // "YYYY-MM"
+  if (v) {
+    const [y, m] = v.split("-").map(Number);
+    return { start: iso(new Date(y, m - 1, 1)), end: iso(new Date(y, m, 0)) };
+  }
+  return nextMonthPeriod();
+}
+
+function buildCapacity() {
+  const def = el("capacity-default").value;
+  if (!def) return {};
+  const perDay = parseInt(def, 10);
+  const overrides = {};
+  for (let w = 0; w < 5; w++) {
+    const v = el("cap-" + w).value;
+    if (v) overrides[w] = parseInt(v, 10);
+  }
+  return { points_per_day: perDay, points_per_day_overrides: overrides };
 }
 
 const WEEKDAYS_RU = [
@@ -269,7 +300,7 @@ optimizeBtn.addEventListener("click", async () => {
   mapSection.classList.add("hidden");
   const stopStages = runStageSequence();
   try {
-    const period = nextMonthPeriod();
+    const period = currentPeriod();
     const resp = await fetch("/api/optimize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -280,6 +311,7 @@ optimizeBtn.addEventListener("click", async () => {
         period_end: period.end,
         home_address: el("home-address").value.trim() || null,
         focus: el("focus").value,
+        ...buildCapacity(),
       }),
     });
     if (!resp.ok) {
