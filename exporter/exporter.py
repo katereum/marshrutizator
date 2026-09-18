@@ -77,6 +77,8 @@ def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str
                 "Код Супервайзера": orig.get("Код Супервайзера", ""),
                 "Код торгового представителя": orig.get("Код торгового представителя", ""),
                 "Сколько раз посещаем в месяц": point.frequency,
+                "Оценка": "" if point.score is None else point.score,
+                "Результат": "" if point.result is None else point.result,
             }
             for name, column in col_index.items():
                 if name in values:
