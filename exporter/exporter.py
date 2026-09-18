@@ -56,7 +56,7 @@ def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str
             orig = point.original
             values = {
                 "№ п/п": num,
-                "Дата визита": day.date.strftime("%d.%m.%Y"),
+                "Дата визита": day.date,
                 "День недели": WEEKDAYS_RU[day.weekday],
                 "Единый код": orig.get("Единый код", point.id),
                 "Старый код": orig.get("Старый код", ""),
@@ -83,6 +83,9 @@ def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str
                     cell = ws.cell(row=write_row, column=column, value=values[name])
                     if has_sample:
                         _copy_style(cell, ws.cell(row=sample_row, column=column))
+                    if name == "Дата визита":
+                        # Настоящая дата, всегда в формате ДД.ММ.ГГГГ (1 июля = 01.07).
+                        cell.number_format = "DD.MM.YYYY"
             num += 1
             write_row += 1
 

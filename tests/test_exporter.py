@@ -1,7 +1,7 @@
 import io
 import re
 import unittest
-from datetime import date
+from datetime import date, datetime
 
 from openpyxl import load_workbook, Workbook
 
@@ -57,7 +57,9 @@ class TestExporter(unittest.TestCase):
                 break
         self.assertIsNotNone(found)
         self.assertEqual(ws.cell(row=found, column=1).value, 1)  # «№ п/п»
-        self.assertRegex(str(ws.cell(row=found, column=2).value), r"\d{2}\.\d{2}\.\d{4}")
+        date_cell = ws.cell(row=found, column=2)
+        self.assertIsInstance(date_cell.value, (date, datetime))  # настоящая дата
+        self.assertEqual(date_cell.number_format, "DD.MM.YYYY")  # 01.07 = 1 июля
         self.assertIn(ws.cell(row=found, column=3).value, [
             "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье",
         ])

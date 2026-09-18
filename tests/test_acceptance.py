@@ -130,7 +130,11 @@ class TestAcceptance(unittest.TestCase):
         # Критерий 8: визиты только на рабочие дни.
         for content in files.values():
             for row in read_output_rows(content):
-                d = datetime.strptime(str(row[1]), "%d.%m.%Y").date()
+                raw_date = row[1]
+                if isinstance(raw_date, datetime):
+                    d = raw_date.date()
+                else:
+                    d = datetime.strptime(str(raw_date), "%d.%m.%Y").date()
                 self.assertLess(d.weekday(), 5, f"выходной день {row[1]}")
 
         # Критерий 14: исходные данные точек не искажены.
