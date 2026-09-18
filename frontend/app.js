@@ -27,13 +27,6 @@ const mapSection = el("map-section");
 // Прогресс обработки для машинки (0..1); реальную реализацию ставит блок с машинкой.
 let setCarProgress = function () {};
 
-// Период по умолчанию — следующий календарный месяц (можно изменить в форме).
-(function () {
-  const p = nextMonthPeriod();
-  el("period-start").value = p.start;
-  el("period-end").value = p.end;
-})();
-
 function setStatus(text, isError = false) {
   statusBox.classList.remove("hidden");
   statusBox.classList.toggle("error", isError);
@@ -89,15 +82,6 @@ function nextMonthPeriod() {
   const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   return { start: iso(start), end: iso(end) };
-}
-
-function currentPeriod() {
-  const start = el("period-start").value;
-  const end = el("period-end").value;
-  if (start && end) {
-    return { start, end };
-  }
-  return nextMonthPeriod();
 }
 
 const WEEKDAYS_RU = [
@@ -285,7 +269,7 @@ optimizeBtn.addEventListener("click", async () => {
   mapSection.classList.add("hidden");
   const stopStages = runStageSequence();
   try {
-    const period = currentPeriod();
+    const period = nextMonthPeriod();
     const resp = await fetch("/api/optimize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

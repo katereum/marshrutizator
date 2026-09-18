@@ -201,20 +201,6 @@ body {
   color: #94a3b8;
 }
 
-.period-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.period-row input {
-  flex: 1;
-  min-width: 0;
-  width: auto;
-}
-.period-row span {
-  color: #64748b;
-}
-
 .upload {
   display: block;
   margin-bottom: 12px;

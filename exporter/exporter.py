@@ -94,6 +94,15 @@ def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str
         raise ValueError("В шаблоне не найдена строка заголовка (Единый код + Дата визита)")
     header_row, col_index = found
 
+    # Автодобавляем опциональные колонки, если их нет в шаблоне: так Оценка
+    # и Результат из базы всегда попадают в выгрузку без правки шаблона.
+    next_col = ws.max_column + 1
+    for name in ("Оценка", "Результат", "Приоритет"):
+        if name not in col_index:
+            col_index[name] = next_col
+            ws.cell(row=header_row, column=next_col, value=name)
+            next_col += 1
+
     sample_row = header_row + 1
     has_sample = ws.cell(row=sample_row, column=col_index["Единый код"]).value not in (None, "")
 

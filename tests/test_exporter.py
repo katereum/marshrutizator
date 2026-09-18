@@ -119,6 +119,33 @@ class TestExporter(unittest.TestCase):
         self.assertEqual(ws["B2"].value, "2 из 2")  # обе с оценкой
         self.assertEqual(ws["B3"].value, "2 из 2")  # обе с результатом
 
+    def test_export_auto_adds_score_and_result_columns(self):
+        # Шаблон БЕЗ колонок Оценка/Результат — они должны добавиться сами.
+        points = [
+            Point(
+                id="A001", trade_rep_code="TP1", frequency=1, locality="Москва",
+                street="ул ленина", house="1", score=3.0, result=80.0,
+                original={
+                    "Единый код": "A001",
+                    "Код торгового представителя": "TP1",
+                    "Оценка": 3,
+                    "Результат": "80%",
+                },
+            )
+        ]
+        result = build_route(points, date(2026, 9, 1), date(2026, 9, 30))
+        data = export_route(io.BytesIO(template_bytes()), result, {p.id: p for p in points})
+
+        wb = load_workbook(io.BytesIO(data))
+        ws = wb.active
+        header = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+        self.assertIn("Оценка", header)
+        self.assertIn("Результат", header)
+        oi = header.index("Оценка") + 1
+        ri = header.index("Результат") + 1
+        self.assertEqual(ws.cell(row=2, column=oi).value, "3")
+        self.assertEqual(ws.cell(row=2, column=ri).value, "80%")  # «%» сохранён
+
 
 if __name__ == "__main__":
     unittest.main()
