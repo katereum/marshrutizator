@@ -20,9 +20,13 @@ FOCUS_LABELS = {
 }
 
 
-def _num(value):
-    """Число для вывода; None -> прочерк (видно, что данных нет)."""
-    return "—" if value is None else value
+def _raw(point: Point, key: str):
+    """Сырое значение из базы (сохраняет «%»), пустое -> прочерк."""
+    v = (point.original or {}).get(key)
+    if v is None:
+        return "—"
+    s = str(v).strip()
+    return s if s != "" else "—"
 
 
 def _find_header(ws) -> tuple[int, dict[str, int]] | None:
@@ -74,8 +78,8 @@ def _add_summary_sheet(wb, result: RouteResult, points_by_id: dict[str, Point]) 
     ordered = sorted(points, key=lambda p: result.priority.get(p.id, 0.0), reverse=True)
     for row, p in enumerate(ordered, start=6):
         ws.cell(row=row, column=1, value=p.id)
-        ws.cell(row=row, column=2, value=_num(p.score))
-        ws.cell(row=row, column=3, value=_num(p.result))
+        ws.cell(row=row, column=2, value=_raw(p, "Оценка"))
+        ws.cell(row=row, column=3, value=_raw(p, "Результат"))
         ws.cell(row=row, column=4, value=round(result.priority.get(p.id, 0.0), 2))
 
 
@@ -125,8 +129,8 @@ def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str
                 "Код Супервайзера": orig.get("Код Супервайзера", ""),
                 "Код торгового представителя": orig.get("Код торгового представителя", ""),
                 "Сколько раз посещаем в месяц": point.frequency,
-                "Оценка": _num(point.score),
-                "Результат": _num(point.result),
+                "Оценка": _raw(point, "Оценка"),
+                "Результат": _raw(point, "Результат"),
                 "Приоритет": "" if result.priority.get(point.id) is None else round(result.priority[point.id], 2),
             }
             for name, column in col_index.items():

@@ -79,7 +79,12 @@ class TestExporter(unittest.TestCase):
             Point(
                 id="A001", trade_rep_code="TP1", frequency=1, locality="Москва",
                 street="ул ленина", house="1", score=3.0, result=77.5,
-                original={"Единый код": "A001", "Код торгового представителя": "TP1"},
+                original={
+                    "Единый код": "A001",
+                    "Код торгового представителя": "TP1",
+                    "Оценка": 3,
+                    "Результат": "77.5%",
+                },
             )
         ]
         result = build_route(points, date(2026, 9, 1), date(2026, 9, 30))
@@ -90,8 +95,8 @@ class TestExporter(unittest.TestCase):
         header = [sheet.cell(row=1, column=c).value for c in range(1, sheet.max_column + 1)]
         oi = header.index("Оценка") + 1
         ri = header.index("Результат") + 1
-        self.assertEqual(sheet.cell(row=2, column=oi).value, 3.0)
-        self.assertEqual(sheet.cell(row=2, column=ri).value, 77.5)
+        self.assertEqual(sheet.cell(row=2, column=oi).value, "3")
+        self.assertEqual(sheet.cell(row=2, column=ri).value, "77.5%")  # «%» сохранён
 
     def test_export_adds_summary_sheet(self):
         from optimizer.priority import FOCUS_FIX

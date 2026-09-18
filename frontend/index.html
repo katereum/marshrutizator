@@ -93,6 +93,16 @@
           <p class="home-note">Учитывает колонки «Оценка» и «Результат», если они есть в базе.</p>
         </div>
 
+        <div class="home-field">
+          <label>Период</label>
+          <div class="period-row">
+            <input type="date" id="period-start">
+            <span>—</span>
+            <input type="date" id="period-end">
+          </div>
+          <p class="home-note">По умолчанию — следующий календарный месяц.</p>
+        </div>
+
         <label class="upload" for="planning-file">
           <span class="upload-label" id="planning-label">Загрузить базу для планирования</span>
           <input type="file" id="planning-file" accept=".xlsx" hidden>
