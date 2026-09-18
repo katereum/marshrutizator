@@ -32,6 +32,20 @@ def _raw(point: Point, key: str):
     return "—"
 
 
+def _result_display(point: Point) -> str:
+    """Результат как проценты: дописывает «%», если его нет в исходнике."""
+    v = _raw(point, "Результат")
+    if v == "—":
+        return v
+    if "%" in v:
+        return v
+    try:
+        num = float(v.replace(",", "."))
+        return f"{int(num)}%" if num == int(num) else f"{num}%"
+    except ValueError:
+        return v + "%"
+
+
 def _find_column(col_index: dict, name: str):
     """Колонка по имени без учёта регистра (Оценка/результат/Результат)."""
     for hdr, col in col_index.items():
@@ -90,7 +104,7 @@ def _add_summary_sheet(wb, result: RouteResult, points_by_id: dict[str, Point]) 
     for row, p in enumerate(ordered, start=6):
         ws.cell(row=row, column=1, value=p.id)
         ws.cell(row=row, column=2, value=_raw(p, "Оценка"))
-        ws.cell(row=row, column=3, value=_raw(p, "Результат"))
+        ws.cell(row=row, column=3, value=_result_display(p))
         ws.cell(row=row, column=4, value=round(result.priority.get(p.id, 0.0), 2))
 
 
@@ -151,7 +165,7 @@ def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str
                 "Код торгового представителя": orig.get("Код торгового представителя", ""),
                 "Сколько раз посещаем в месяц": point.frequency,
                 "Оценка": _raw(point, "Оценка"),
-                "Результат": _raw(point, "Результат"),
+                "Результат": _result_display(point),
                 "Приоритет": "" if result.priority.get(point.id) is None else round(result.priority[point.id], 2),
             }
             for name, value in values.items():
