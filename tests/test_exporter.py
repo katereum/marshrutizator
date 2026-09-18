@@ -146,6 +146,38 @@ class TestExporter(unittest.TestCase):
         self.assertEqual(ws.cell(row=2, column=oi).value, "3")
         self.assertEqual(ws.cell(row=2, column=ri).value, "80%")  # «%» сохранён
 
+    def test_export_case_insensitive_result_column(self):
+        # Шаблон с «результат» (маленькая буква) — заполняем его, без дубля «Результат».
+        wb = Workbook()
+        ws = wb.active
+        ws.append(RESULT_COLUMNS + ["Оценка", "результат"])
+        ws.append(["" for _ in RESULT_COLUMNS + ["Оценка", "результат"]])
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        points = [
+            Point(
+                id="A001", trade_rep_code="TP1", frequency=1, locality="Москва",
+                street="ул ленина", house="1", score=3.0, result=80.0,
+                original={
+                    "Единый код": "A001",
+                    "Код торгового представителя": "TP1",
+                    "Оценка": 3,
+                    "результат": "80%",
+                },
+            )
+        ]
+        result = build_route(points, date(2026, 9, 1), date(2026, 9, 30))
+        data = export_route(io.BytesIO(buf.getvalue()), result, {p.id: p for p in points})
+
+        out = load_workbook(io.BytesIO(data))
+        sheet = out.active
+        header = [sheet.cell(row=1, column=c).value for c in range(1, sheet.max_column + 1)]
+        self.assertIn("результат", header)
+        self.assertNotIn("Результат", header)  # не создаём дубль
+        ri = header.index("результат") + 1
+        self.assertEqual(sheet.cell(row=2, column=ri).value, "80%")
+
 
 if __name__ == "__main__":
     unittest.main()

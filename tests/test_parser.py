@@ -100,6 +100,22 @@ class TestParser(unittest.TestCase):
         self.assertIsNone(points[0].score)
         self.assertIsNone(points[0].result)
 
+    def test_optional_columns_case_insensitive(self):
+        header = PLANNING_COLUMNS + ["Оценка", "результат"]  # «результат» с маленькой
+
+        def opt_row(code, score, result):
+            d = {c: "" for c in header}
+            d.update({
+                "Единый код": code, "Населенный пункт": "Москва", "Тип улицы": "ул.",
+                "Название улицы": "Ленина", "Номер дома": "1", "Цикличность": 1,
+                "Код торгового представителя": "TP1", "Оценка": score, "результат": result,
+            })
+            return [d[c] for c in header]
+
+        points = parse_planning(xlsx_with(header, [opt_row("A001", 4, "80%")]))
+        self.assertEqual(points[0].score, 4.0)
+        self.assertEqual(points[0].result, 80.0)
+
 
 if __name__ == "__main__":
     unittest.main()

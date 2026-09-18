@@ -21,12 +21,23 @@ FOCUS_LABELS = {
 
 
 def _raw(point: Point, key: str):
-    """Сырое значение из базы (сохраняет «%»), пустое -> прочерк."""
-    v = (point.original or {}).get(key)
-    if v is None:
-        return "—"
-    s = str(v).strip()
-    return s if s != "" else "—"
+    """Сырое значение из базы (сохраняет «%»), пустое -> прочерк. Без регистра."""
+    o = point.original or {}
+    for k, v in o.items():
+        if str(k).strip().lower() == key.lower():
+            if v is None:
+                return "—"
+            s = str(v).strip()
+            return s if s != "" else "—"
+    return "—"
+
+
+def _find_column(col_index: dict, name: str):
+    """Колонка по имени без учёта регистра (Оценка/результат/Результат)."""
+    for hdr, col in col_index.items():
+        if str(hdr).strip().lower() == name.lower():
+            return col
+    return None
 
 
 def _find_header(ws) -> tuple[int, dict[str, int]] | None:
@@ -94,11 +105,12 @@ def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str
         raise ValueError("В шаблоне не найдена строка заголовка (Единый код + Дата визита)")
     header_row, col_index = found
 
-    # Автодобавляем опциональные колонки, если их нет в шаблоне: так Оценка
-    # и Результат из базы всегда попадают в выгрузку без правки шаблона.
+    # Автодобавляем опциональные колонки, если их нет в шаблоне (без регистра):
+    # так Оценка/Результат из базы всегда попадают в выгрузку без правки шаблона.
     next_col = ws.max_column + 1
+    existing = {str(k).strip().lower() for k in col_index}
     for name in ("Оценка", "Результат", "Приоритет"):
-        if name not in col_index:
+        if name.lower() not in existing:
             col_index[name] = next_col
             ws.cell(row=header_row, column=next_col, value=name)
             next_col += 1
@@ -142,14 +154,16 @@ def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str
                 "Результат": _raw(point, "Результат"),
                 "Приоритет": "" if result.priority.get(point.id) is None else round(result.priority[point.id], 2),
             }
-            for name, column in col_index.items():
-                if name in values:
-                    cell = ws.cell(row=write_row, column=column, value=values[name])
-                    if has_sample:
-                        _copy_style(cell, ws.cell(row=sample_row, column=column))
-                    if name == "Дата визита":
-                        # Настоящая дата, всегда в формате ДД.ММ.ГГГГ (1 июля = 01.07).
-                        cell.number_format = "DD.MM.YYYY"
+            for name, value in values.items():
+                column = _find_column(col_index, name)
+                if column is None:
+                    continue
+                cell = ws.cell(row=write_row, column=column, value=value)
+                if has_sample:
+                    _copy_style(cell, ws.cell(row=sample_row, column=column))
+                if name == "Дата визита":
+                    # Настоящая дата, всегда в формате ДД.ММ.ГГГГ (1 июля = 01.07).
+                    cell.number_format = "DD.MM.YYYY"
             num += 1
             write_row += 1
 

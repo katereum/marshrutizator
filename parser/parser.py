@@ -24,6 +24,14 @@ def _optional_float(value) -> float | None:
         return None
 
 
+def _lookup_ci(raw: dict, name: str):
+    """Поиск значения по колонке без учёта регистра (Оценка/результат/Результат)."""
+    for k, v in raw.items():
+        if str(k).strip().lower() == name.lower():
+            return v
+    return None
+
+
 def _read_header_and_rows(fileobj):
     wb = load_workbook(fileobj, read_only=True, data_only=True)
     ws = wb.active
@@ -88,8 +96,8 @@ def parse_planning(fileobj) -> list[Point]:
                 house=house,
                 metro=metro,
                 normalized_address=address,
-                score=_optional_float(raw.get("Оценка")),
-                result=_optional_float(raw.get("Результат")),
+                score=_optional_float(_lookup_ci(raw, "Оценка")),
+                result=_optional_float(_lookup_ci(raw, "Результат")),
                 original={k: (v if v is not None else "") for k, v in raw.items()},
             )
         )
