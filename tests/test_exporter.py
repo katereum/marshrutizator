@@ -93,6 +93,27 @@ class TestExporter(unittest.TestCase):
         self.assertEqual(sheet.cell(row=2, column=oi).value, 3.0)
         self.assertEqual(sheet.cell(row=2, column=ri).value, 77.5)
 
+    def test_export_adds_summary_sheet(self):
+        from optimizer.priority import FOCUS_FIX
+
+        points = [
+            Point(id="A001", trade_rep_code="TP1", frequency=1, locality="Москва",
+                  street="ул ленина", house="1", score=1.0, result=10.0,
+                  original={"Единый код": "A001", "Код торгового представителя": "TP1"}),
+            Point(id="A002", trade_rep_code="TP1", frequency=1, locality="Москва",
+                  street="ул ленина", house="2", score=5.0, result=100.0,
+                  original={"Единый код": "A002", "Код торгового представителя": "TP1"}),
+        ]
+        result = build_route(points, date(2026, 9, 1), date(2026, 9, 30), focus=FOCUS_FIX)
+        data = export_route(io.BytesIO(template_bytes()), result, {p.id: p for p in points})
+
+        wb = load_workbook(io.BytesIO(data))
+        self.assertIn("Сводка", wb.sheetnames)
+        ws = wb["Сводка"]
+        self.assertEqual(ws["B1"].value, "Сначала проблемные")
+        self.assertEqual(ws["B2"].value, "2 из 2")  # обе с оценкой
+        self.assertEqual(ws["B3"].value, "2 из 2")  # обе с результатом
+
 
 if __name__ == "__main__":
     unittest.main()

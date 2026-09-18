@@ -13,6 +13,17 @@ WEEKDAYS_RU = [
     "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье",
 ]
 
+FOCUS_LABELS = {
+    "economy": "Экономия бензина",
+    "fix_problems": "Сначала проблемные",
+    "top_performers": "Сначала лучшие",
+}
+
+
+def _num(value):
+    """Число для вывода; None -> прочерк (видно, что данных нет)."""
+    return "—" if value is None else value
+
 
 def _find_header(ws) -> tuple[int, dict[str, int]] | None:
     for r in range(1, min(ws.max_row, 10) + 1):
@@ -30,6 +41,43 @@ def _copy_style(dst, src) -> None:
     dst.alignment = copy(src.alignment)
     dst.number_format = src.number_format
     dst.protection = copy(src.protection)
+
+
+def _add_summary_sheet(wb, result: RouteResult, points_by_id: dict[str, Point]) -> None:
+    """Добавляет лист «Сводка»: акцент, учёт Оценки/Результата и приоритеты."""
+    ws = wb.create_sheet("Сводка")
+
+    # Точки именно этого маршрута (в порядке появления), без дублей.
+    ids: list[str] = []
+    for day in result.days:
+        for vid in day.ordered_visits:
+            pid = vid.rsplit("#", 1)[0]
+            if pid not in ids:
+                ids.append(pid)
+    points = [points_by_id[pid] for pid in ids if pid in points_by_id]
+
+    n_score = sum(1 for p in points if p.score is not None)
+    n_result = sum(1 for p in points if p.result is not None)
+
+    ws["A1"] = "Акцент маршрута"
+    ws["B1"] = FOCUS_LABELS.get(result.focus, result.focus)
+    ws["A2"] = "Точек с Оценкой"
+    ws["B2"] = f"{n_score} из {len(points)}"
+    ws["A3"] = "Точек с Результатом"
+    ws["B3"] = f"{n_result} из {len(points)}"
+
+    ws["A5"] = "Код"
+    ws["B5"] = "Оценка"
+    ws["C5"] = "Результат"
+    ws["D5"] = "Приоритет"
+
+    ordered = sorted(points, key=lambda p: result.priority.get(p.id, 0.0), reverse=True)
+    for row, p in enumerate(ordered, start=6):
+        ws.cell(row=row, column=1, value=p.id)
+        ws.cell(row=row, column=2, value=_num(p.score))
+        ws.cell(row=row, column=3, value=_num(p.result))
+        ws.cell(row=row, column=4, value=round(result.priority.get(p.id, 0.0), 2))
+
 
 
 def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str, Point]) -> bytes:
@@ -77,8 +125,9 @@ def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str
                 "Код Супервайзера": orig.get("Код Супервайзера", ""),
                 "Код торгового представителя": orig.get("Код торгового представителя", ""),
                 "Сколько раз посещаем в месяц": point.frequency,
-                "Оценка": "" if point.score is None else point.score,
-                "Результат": "" if point.result is None else point.result,
+                "Оценка": _num(point.score),
+                "Результат": _num(point.result),
+                "Приоритет": "" if result.priority.get(point.id) is None else round(result.priority[point.id], 2),
             }
             for name, column in col_index.items():
                 if name in values:
@@ -90,6 +139,8 @@ def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str
                         cell.number_format = "DD.MM.YYYY"
             num += 1
             write_row += 1
+
+    _add_summary_sheet(wb, result, points_by_id)
 
     out = io.BytesIO()
     wb.save(out)

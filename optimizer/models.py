@@ -78,3 +78,5 @@ class RouteResult:
     days: list[DaySchedule] = field(default_factory=list)
     stats: RouteStats = field(default_factory=RouteStats)
     warnings: list[str] = field(default_factory=list)
+    focus: str = "economy"                       # акцент маршрута
+    priority: dict = field(default_factory=dict)  # point_id -> приоритет 0..1

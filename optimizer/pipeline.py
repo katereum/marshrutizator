@@ -123,6 +123,8 @@ def build_route(
         period_end=period_end,
         days=schedules,
         warnings=warnings,
+        focus=focus,
+        priority=priority,
     )
 
     expected = {p.id: min(p.frequency, n_days) for p in points}
