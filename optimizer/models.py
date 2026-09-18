@@ -25,6 +25,8 @@ class Point:
     normalized_address: str = ""
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    score: Optional[float] = None       # «Оценка» 0..5; None = не оценено
+    result: Optional[float] = None      # «Результат»; произвольные единицы, больше = лучше
     original: dict = field(default_factory=dict)  # исходная строка Excel (для экспорта без искажений)
 
     @property

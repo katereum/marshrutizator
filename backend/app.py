@@ -255,6 +255,7 @@ def optimize(req: OptimizeRequest):
         work_on_weekends=req.work_on_weekends,
         home=home,
         road_matrix=road_matrix,
+        focus=req.focus,
     )
 
     store.update(job_id, status="EXPORTING")

@@ -63,6 +63,22 @@ class TestRouting(unittest.TestCase):
         self.assertEqual(order[0], "p0#0")
         self.assertEqual(order[1], "p2#0")
 
+    def test_order_priority_pulls_high_priority_earlier(self):
+        pts = {
+            "a#0": Point(id="a", trade_rep_code="T", frequency=1, latitude=55.75, longitude=37.61),
+            "b#0": Point(id="b", trade_rep_code="T", frequency=1, latitude=55.76, longitude=37.62),
+            "c#0": Point(id="c", trade_rep_code="T", frequency=1, latitude=55.77, longitude=37.63),
+        }
+        home = (55.75, 37.60)
+        ids = list(pts.keys())
+
+        without = order_day(ids, pts, home)
+        self.assertEqual(without[0], "a#0")  # ближайшая к дому
+
+        priority = {"a": 0.0, "b": 0.0, "c": 1.0}
+        with_prio = order_day(ids, pts, home, priority=priority, priority_weight=10.0)
+        self.assertEqual(with_prio[0], "c#0")  # приоритетная вышла вперёд
+
 
 if __name__ == "__main__":
     unittest.main()

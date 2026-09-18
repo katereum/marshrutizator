@@ -111,6 +111,18 @@ class TestPipeline(unittest.TestCase):
         # дальней дорогой туда и одной обратно.
         self.assertLess(r.stats.total_km, 4 * 50.0 + 4 * 50.0)
 
+    def test_focus_modes_produce_valid_routes(self):
+        pts = [
+            Point(id=f"p{i}", trade_rep_code="T", frequency=1,
+                  latitude=55.75 + i * 0.001, longitude=37.61,
+                  score=(i % 6), result=(i * 10))
+            for i in range(6)
+        ]
+        for focus in ("economy", "fix_problems", "top_performers"):
+            r = build_route(pts, date(2026, 9, 1), date(2026, 9, 30), focus=focus)
+            self.assertEqual(r.stats.violations, [], focus)
+            self.assertEqual(r.stats.total_visits, 6, focus)
+
 
 if __name__ == "__main__":
     unittest.main()

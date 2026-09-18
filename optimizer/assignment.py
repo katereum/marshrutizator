@@ -33,7 +33,7 @@ def ideal_day(slot: int, frequency: int, n_days: int) -> int:
     return round(slot * (n_days - 1) / (frequency - 1))
 
 
-def _estimate_scale(dist_fn, point_ids) -> float:
+def estimate_scale(dist_fn, point_ids) -> float:
     """Оценка характерного дорожного расстояния между точками (медиана NN).
 
     Используется как масштаб для веса цикличности и стоимости «пустого дня».
@@ -104,7 +104,7 @@ def assign_days(
         order = sorted(points, key=lambda p: (-freq[p], p))
 
     cap = (total + n_days - 1) // n_days  # потолок нагрузки на день
-    scale = _estimate_scale(dist_fn, points)
+    scale = estimate_scale(dist_fn, points)
     seed_km = 2.0 * scale      # стоимость начала нового (пустого) дня
     cycle_weight = scale       # вес цикличности, в «километрах»
 

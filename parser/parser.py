@@ -11,6 +11,19 @@ from .errors import ValidationError
 from .validator import validate_planning_header
 
 
+def _optional_float(value) -> float | None:
+    """Читает опциональное число. Пусто/не число -> None (не учитываем)."""
+    if value is None:
+        return None
+    s = str(value).strip().replace("%", "").replace(",", ".").strip()
+    if s == "":
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
 def _read_header_and_rows(fileobj):
     wb = load_workbook(fileobj, read_only=True, data_only=True)
     ws = wb.active
@@ -75,6 +88,8 @@ def parse_planning(fileobj) -> list[Point]:
                 house=house,
                 metro=metro,
                 normalized_address=address,
+                score=_optional_float(raw.get("Оценка")),
+                result=_optional_float(raw.get("Результат")),
                 original={k: (v if v is not None else "") for k, v in raw.items()},
             )
         )

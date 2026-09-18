@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from datetime import date
 
-from .assignment import assign_days
+from .assignment import assign_days, estimate_scale
 from .calendar import working_days
 from .clusterer import cluster_points
 from .distance import haversine_km
 from .models import HOME_ID, DaySchedule, Point, RouteResult, RouteStats, Visit
+from .priority import FOCUS_ECONOMY, build_priority
 from .routing import order_day
 from .validator import route_score, validate_route
 from .visits import expand_visits
@@ -78,6 +79,7 @@ def build_route(
     work_on_weekends: bool = False,
     home: tuple[float, float] | None = None,
     road_matrix: dict | None = None,
+    focus: str = FOCUS_ECONOMY,
 ) -> RouteResult:
     """Строит месячный маршрут для набора точек одного сотрудника."""
     days = working_days(period_start, period_end, work_on_weekends)
@@ -98,9 +100,18 @@ def build_route(
     visit_dist = lambda a, b: node_distance(_pid(a), _pid(b))
     visit_home_dist = (lambda v: node_distance(HOME_ID, _pid(v))) if home is not None else None
 
+    # Мягкий приоритет: вес λ = половина типичного расстояния между соседними точками,
+    # чтобы приоритет переставлял точки внутри района, не ломая географию.
+    priority = build_priority(points, focus)
+    scale = estimate_scale(node_distance, [p.id for p in points])
+    priority_weight = 0.5 * scale if focus != FOCUS_ECONOMY else 0.0
+
     schedules: list[DaySchedule] = []
     for d in range(n_days):
-        ordered = order_day(day_visits[d], points_by_visit, home, visit_dist, visit_home_dist)
+        ordered = order_day(
+            day_visits[d], points_by_visit, home, visit_dist, visit_home_dist,
+            priority=priority, priority_weight=priority_weight,
+        )
         schedules.append(
             DaySchedule(date=days[d], weekday=days[d].weekday(), ordered_visits=ordered)
         )
@@ -137,6 +148,7 @@ def build_routes(
     work_on_weekends: bool = False,
     home: tuple[float, float] | None = None,
     road_matrix: dict | None = None,
+    focus: str = FOCUS_ECONOMY,
 ) -> list[RouteResult]:
     """Строит маршруты, разбивая базу по `Код торгового представителя` (R2)."""
     groups: dict[str, list[Point]] = {}
@@ -156,6 +168,7 @@ def build_routes(
                 work_on_weekends=work_on_weekends,
                 home=home,
                 road_matrix=road_matrix,
+                focus=focus,
             )
         )
     return results

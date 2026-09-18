@@ -74,6 +74,32 @@ class TestParser(unittest.TestCase):
             points = parse_planning(f)
         self.assertEqual(len(points), 10)
 
+    def test_optional_score_and_result(self):
+        header = PLANNING_COLUMNS + ["Оценка", "Результат"]
+
+        def opt_row(code, house, score, result):
+            d = {c: "" for c in header}
+            d.update({
+                "Единый код": code, "Населенный пункт": "Москва", "Тип улицы": "ул.",
+                "Название улицы": "Ленина", "Номер дома": house, "Цикличность": 1,
+                "Код торгового представителя": "TP1", "Оценка": score, "Результат": result,
+            })
+            return [d[c] for c in header]
+
+        points = parse_planning(xlsx_with(header, [
+            opt_row("A001", "1", 4, "80%"),
+            opt_row("A002", "2", "", 120),
+        ]))
+        self.assertEqual(points[0].score, 4.0)
+        self.assertEqual(points[0].result, 80.0)
+        self.assertIsNone(points[1].score)  # пустая оценка -> не оценено
+        self.assertEqual(points[1].result, 120.0)
+
+    def test_no_optional_columns_defaults_none(self):
+        points = parse_planning(xlsx_with(PLANNING_COLUMNS, [row()]))
+        self.assertIsNone(points[0].score)
+        self.assertIsNone(points[0].result)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,21 +16,28 @@ def order_day(
     home: tuple[float, float] | None = None,
     dist=None,
     home_dist=None,
+    priority: dict[str, float] | None = None,
+    priority_weight: float = 0.0,
 ) -> list[str]:
     """Возвращает visit_ids в порядке посещения.
 
     `dist` и `home_dist` позволяют подменить прямую (haversine) метрику на
-    дорожную: `dist(a, b)` — км между визитами, `home_dist(v)` — км от дома
-    до визита. Если не заданы, используется haversine.
+    дорожную. `priority` (point_id -> 0..1) и `priority_weight` (в «км»)
+    мягко вытаскивают приоритетные точки раньше: жадный сосед выбирает
+    `dist - priority_weight * priority`, а 2-opt остаётся чисто дорожным.
     """
     if len(visit_ids) <= 2:
         return list(visit_ids)
     if all(points_by_visit[v].has_coords for v in visit_ids):
-        return _nn_2opt(visit_ids, points_by_visit, home, dist, home_dist)
+        return _nn_2opt(visit_ids, points_by_visit, home, dist, home_dist, priority, priority_weight)
     return sorted(
         visit_ids,
         key=lambda v: (points_by_visit[v].normalized_address, v),
     )
+
+
+def _pid(visit_id: str) -> str:
+    return visit_id.rsplit("#", 1)[0]
 
 
 def _nn_2opt(
@@ -39,6 +46,8 @@ def _nn_2opt(
     home: tuple[float, float] | None = None,
     dist=None,
     home_dist=None,
+    priority: dict[str, float] | None = None,
+    priority_weight: float = 0.0,
 ) -> list[str]:
     if dist is None:
         def dist(a: str, b: str) -> float:
@@ -50,19 +59,36 @@ def _nn_2opt(
             p = points[v]
             return haversine_km(home[0], home[1], p.latitude, p.longitude)
 
-    # 1. Жадный ближайший сосед (от дома, если он задан, иначе от первой точки).
+    use_priority = priority is not None and priority_weight > 0.0
+
+    def prio(v: str) -> float:
+        return priority.get(_pid(v), 0.0) if priority is not None else 0.0
+
+    # 1. Жадный ближайший сосед (от дома/приоритетной точки), с мягким приоритетом.
     remaining = set(visit_ids)
-    start = min(remaining, key=home_dist) if home_dist is not None else visit_ids[0]
+    if home_dist is not None:
+        if use_priority:
+            start = min(remaining, key=lambda v: home_dist(v) - priority_weight * prio(v))
+        else:
+            start = min(remaining, key=home_dist)
+    elif use_priority:
+        start = max(remaining, key=prio)
+    else:
+        start = visit_ids[0]
+
     order = [start]
     remaining.remove(start)
     cur = start
     while remaining:
-        nxt = min(remaining, key=lambda v: dist(cur, v))
+        if use_priority:
+            nxt = min(remaining, key=lambda v: dist(cur, v) - priority_weight * prio(v))
+        else:
+            nxt = min(remaining, key=lambda v: dist(cur, v))
         order.append(nxt)
         remaining.remove(nxt)
         cur = nxt
 
-    # 2. Локальная оптимизация 2-opt (для дома учитываются плечи «дом-первая» и «последняя-дом»).
+    # 2. Локальная оптимизация 2-opt (чисто по дорогам — приоритет не «размазывает»).
     order = _two_opt(order, dist, home_dist)
     return order
 

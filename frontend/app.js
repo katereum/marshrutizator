@@ -279,6 +279,7 @@ optimizeBtn.addEventListener("click", async () => {
         period_start: period.start,
         period_end: period.end,
         home_address: el("home-address").value.trim() || null,
+        focus: el("focus").value,
       }),
     });
     if (!resp.ok) {
