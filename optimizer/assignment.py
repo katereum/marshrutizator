@@ -99,9 +99,12 @@ def assign_days(
         if len(caps) != n_days:
             raise ValueError(f"caps: ожидалось {n_days} значений, получено {len(caps)}")
         if sum(caps) < total:
-            raise ValueError(
-                f"Не хватает ёмкости: {total} визитов не помещаются в лимиты ({sum(caps)})"
-            )
+            # Мягкое ограничение (R3): визиты не помещаются в лимиты — смягчаем
+            # лимиты, а не падаем. Каждый день получает не меньше ceil(total/n_days),
+            # но заданные пользователем более высокие значения на отдельные дни
+            # сохраняются. Цикличность при этом не нарушается.
+            floor = (total + n_days - 1) // n_days
+            caps = [max(c, floor) for c in caps]
         hard_caps = True
 
     by_point: dict[str, list[Visit]] = {}

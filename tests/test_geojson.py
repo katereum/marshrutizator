@@ -88,6 +88,19 @@ class TestGeojson(unittest.TestCase):
         gj = build_geojson([result], points)
         self.assertEqual(line_features(gj)[0]["geometry"]["coordinates"], [[37.6, 55.7], [37.61, 55.71]])
 
+    def test_home_by_weekday_uses_per_day_home(self):
+        points = {
+            "a": Point(id="a", trade_rep_code="T", frequency=1, latitude=55.7, longitude=37.6),
+        }
+        result = make_result([
+            DaySchedule(date=date(2026, 9, 1), weekday=1, ordered_visits=["a#0"]),  # Вт
+            DaySchedule(date=date(2026, 9, 2), weekday=2, ordered_visits=["a#0"]),  # Ср
+        ])
+        gj = build_geojson([result], points, home=(55.75, 37.61), home_by_weekday={1: (55.9, 37.9)})
+        by_wd = {f["properties"]["weekday"]: f["geometry"]["coordinates"] for f in line_features(gj)}
+        self.assertEqual(by_wd[1][0], [37.9, 55.9])    # переопределённый дом вторника
+        self.assertEqual(by_wd[2][0], [37.61, 55.75])  # базовый дом среды
+
 
 if __name__ == "__main__":
     unittest.main()

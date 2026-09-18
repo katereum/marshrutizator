@@ -33,17 +33,12 @@ def _raw(point: Point, key: str):
 
 
 def _result_display(point: Point) -> str:
-    """Результат как проценты: дописывает «%», если его нет в исходнике."""
-    v = _raw(point, "Результат")
-    if v == "—":
-        return v
-    if "%" in v:
-        return v
-    try:
-        num = float(v.replace(",", "."))
-        return f"{int(num)}%" if num == int(num) else f"{num}%"
-    except ValueError:
-        return v + "%"
+    """Результат — как в исходной базе, без изменений.
+
+    Вводные данные не преобразуем: процент уже восстановлен парсером по формату
+    ячейки («0%» → «90%»), поэтому здесь просто возвращаем исходное значение.
+    """
+    return _raw(point, "Результат")
 
 
 def _find_column(col_index: dict, name: str):
@@ -95,13 +90,24 @@ def _add_summary_sheet(wb, result: RouteResult, points_by_id: dict[str, Point]) 
     ws["A3"] = "Точек с Результатом"
     ws["B3"] = f"{n_result} из {len(points)}"
 
-    ws["A5"] = "Код"
-    ws["B5"] = "Оценка"
-    ws["C5"] = "Результат"
-    ws["D5"] = "Приоритет"
+    # Предупреждения (если есть — например, откат на прямые расстояния).
+    header_row = 5
+    if result.warnings:
+        ws.cell(row=header_row, column=1, value="Предупреждения")
+        r = header_row
+        for w in result.warnings:
+            r += 1
+            ws.cell(row=r, column=1, value="• " + w)
+        header_row = r + 2
+
+    ws.cell(row=header_row, column=1, value="Код")
+    ws.cell(row=header_row, column=2, value="Оценка")
+    ws.cell(row=header_row, column=3, value="Результат")
+    ws.cell(row=header_row, column=4, value="Приоритет")
 
     ordered = sorted(points, key=lambda p: result.priority.get(p.id, 0.0), reverse=True)
-    for row, p in enumerate(ordered, start=6):
+    for i, p in enumerate(ordered):
+        row = header_row + 1 + i
         ws.cell(row=row, column=1, value=p.id)
         ws.cell(row=row, column=2, value=_raw(p, "Оценка"))
         ws.cell(row=row, column=3, value=_result_display(p))
@@ -134,8 +140,8 @@ def export_route(template: BinaryIO, result: RouteResult, points_by_id: dict[str
 
     write_row = sample_row if has_sample else header_row + 1
 
-    num = 1
     for day in result.days:
+        num = 1  # нумерация «№ п/п» начинается заново каждый день
         for vid in day.ordered_visits:
             point = points_by_id.get(vid.rsplit("#", 1)[0])
             if point is None:

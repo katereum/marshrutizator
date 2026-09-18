@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import zipfile
 from dataclasses import replace
@@ -68,6 +69,7 @@ road_distance = ChainRoadDistance(_road_providers) if _road_providers else Offli
 route_geometry = OsrmRouteGeometry()
 
 app = FastAPI(title="Маршрутизатор 3.0")
+logger = logging.getLogger("marshrutizator")
 
 
 @app.exception_handler(MarshrutizatorError)
@@ -76,6 +78,26 @@ async def _domain_error_handler(request, exc: MarshrutizatorError):
     return JSONResponse(
         status_code=status,
         content={"error": {"code": exc.code, "message": exc.message, "details": exc.details}},
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_error_handler(request, exc: Exception):
+    """Любое непредвиденное исключение — JSON вместо «Internal Server Error».
+
+    Фронтенд парсит ответ как JSON, поэтому текстовая страница 500 ломала его
+    с «Unexpected token … is not valid JSON». Здесь же наружу уходит читаемое
+    сообщение, а полный traceback — в лог сервера (terminal, где запущен uvicorn).
+    """
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "internal_error",
+                "message": f"Внутренняя ошибка сервера: {type(exc).__name__}: {exc}",
+            }
+        },
     )
 
 
@@ -170,6 +192,7 @@ def _build_route_geometries(
     results,
     points_by_id: dict,
     home: tuple[float, float] | None,
+    home_by_weekday: dict[int, tuple[float, float]] | None = None,
 ) -> dict[tuple[str, str], list[list[float]]]:
     """Строит дорожные полилинии для каждого дня маршрута.
 
@@ -186,12 +209,16 @@ def _build_route_geometries(
                 if point is not None and point.has_coords:
                     visit_coords.append((point.latitude, point.longitude))
 
+            h = home
+            if home_by_weekday is not None:
+                h = home_by_weekday.get(day.weekday, home)
+
             coords = []
-            if home is not None:
-                coords.append(home)
+            if h is not None:
+                coords.append(h)
             coords.extend(visit_coords)
-            if home is not None:
-                coords.append(home)
+            if h is not None:
+                coords.append(h)
             if len(coords) < 2:
                 continue
 
@@ -199,6 +226,22 @@ def _build_route_geometries(
             if line is not None:
                 geometries[(result.trade_rep_code, day.date.isoformat())] = line
     return geometries
+
+
+def _daily_caps(total_visits: int, wdays, points_per_day: int | None, overrides: dict[int, int]) -> list[int]:
+    """Дневные лимиты: оверрайды по дням недели — жёсткий потолок.
+
+    Явный лимит на конкретный день (например, вторник = 12) никогда не
+    поднимается при смягчении. При переборе визитов смягчается только базовый
+    лимит (`points_per_day`), чтобы суммарная ёмкость вместила все визиты.
+    """
+    n = len(wdays)
+    base = points_per_day if points_per_day is not None else (total_visits + n - 1) // n
+    override_slots = sum(overrides.get(d.weekday(), 0) for d in wdays)
+    num_base = sum(1 for d in wdays if d.weekday() not in overrides)
+    if num_base > 0 and total_visits > override_slots + num_base * base:
+        base = (total_visits - override_slots + num_base - 1) // num_base
+    return [overrides.get(d.weekday(), base) for d in wdays]
 
 
 @app.post("/api/optimize", status_code=202)
@@ -217,6 +260,16 @@ def optimize(req: OptimizeRequest):
     points = _geocode_points(points)
     home = _geocode_home(req.home_address)
 
+    home_by_weekday: dict[int, tuple[float, float]] | None = None
+    if req.home_address_overrides:
+        mapped = {}
+        for wd, addr in req.home_address_overrides.items():
+            ll = _geocode_home(addr)
+            if ll:
+                mapped[wd] = ll
+        if mapped:
+            home_by_weekday = mapped
+
     missing = [p for p in points if not p.has_coords]
     if missing:
         raise OptimizationError(
@@ -231,27 +284,45 @@ def optimize(req: OptimizeRequest):
 
     road_matrix = _build_road_matrix(points, home)
     node_count = len(points) + (1 if home is not None else 0)
+    road_warning = None
     if node_count >= 2 and road_matrix is None:
         errors = [
             f"{type(p).__name__}: {p.last_error}"
             for p in getattr(road_distance, "providers", [])
             if getattr(p, "last_error", None)
         ]
-        message = (
-            "Не удалось получить дорожную матрицу ни от одного провайдера "
-            "(OSRM/Яндекс/GraphHopper/OpenRouteService). "
-            "Если используете локальный OSRM — запустите его командой "
+        road_warning = (
+            "Не удалось получить дорожную матрицу — маршрут построен по прямым "
+            "расстояниям (без учёта дорог). Для дорог запустите локальный OSRM: "
             "`./scripts/setup_osrm.sh start`"
         )
         if errors:
-            message += ": " + "; ".join(errors)
-        raise OptimizationError(message, {"providers": errors})
+            road_warning += ". Причины: " + "; ".join(errors)
 
     store.update(job_id, status="OPTIMIZING")
     caps = None
-    if req.points_per_day is not None:
+    if req.points_per_day is not None or req.points_per_day_overrides:
         wdays = working_days(req.period_start, req.period_end, req.work_on_weekends)
-        caps = [req.points_per_day_overrides.get(d.weekday(), req.points_per_day) for d in wdays]
+        n = len(wdays)
+        overrides = req.points_per_day_overrides or {}
+        total_visits = sum(min(p.frequency, n) for p in points)
+
+        if not req.confirm:
+            base_raw = req.points_per_day if req.points_per_day is not None else (total_visits + n - 1) // n
+            target = sum(overrides.get(d.weekday(), base_raw) for d in wdays)
+            if total_visits != target:
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "needs_confirmation": True,
+                        "total_visits": total_visits,
+                        "target_capacity": target,
+                        "difference": total_visits - target,
+                        "avg_per_day": round(total_visits / n, 1),
+                    },
+                )
+
+        caps = _daily_caps(total_visits, wdays, req.points_per_day, overrides)
     results = build_routes(
         points,
         req.period_start,
@@ -259,10 +330,14 @@ def optimize(req: OptimizeRequest):
         job_id=job_id,
         work_on_weekends=req.work_on_weekends,
         home=home,
+        home_by_weekday=home_by_weekday,
         road_matrix=road_matrix,
         focus=req.focus,
         caps=caps,
     )
+    if road_warning:
+        for r in results:
+            r.warnings.append(road_warning)
 
     store.update(job_id, status="EXPORTING")
     points_by_id = {p.id: p for p in points}
@@ -270,8 +345,8 @@ def optimize(req: OptimizeRequest):
         (f"{r.trade_rep_code or 'route'}.xlsx", export_route(io.BytesIO(template), r, points_by_id))
         for r in results
     ]
-    geometries = _build_route_geometries(results, points_by_id, home)
-    geojson = build_geojson(results, points_by_id, home=home, geometries=geometries)
+    geometries = _build_route_geometries(results, points_by_id, home, home_by_weekday)
+    geojson = build_geojson(results, points_by_id, home=home, home_by_weekday=home_by_weekday, geometries=geometries)
 
     store.update(job_id, status="COMPLETED", results=results, xlsx_files=files, geojson=geojson)
     return {"job_id": job_id}

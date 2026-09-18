@@ -178,8 +178,8 @@ class TestExporter(unittest.TestCase):
         ri = header.index("результат") + 1
         self.assertEqual(sheet.cell(row=2, column=ri).value, "80%")
 
-    def test_result_display_adds_percent_to_number(self):
-        # Результат числом (80) в базе -> в выгрузке «80%».
+    def test_result_display_preserves_number(self):
+        # Результат числом (80) в базе -> в выгрузке «80» (данные не меняем).
         points = [
             Point(
                 id="A001", trade_rep_code="TP1", frequency=1, locality="Москва",
@@ -193,7 +193,38 @@ class TestExporter(unittest.TestCase):
         ws = wb.active
         header = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
         ri = header.index("Результат") + 1
-        self.assertEqual(ws.cell(row=2, column=ri).value, "80%")
+        self.assertEqual(ws.cell(row=2, column=ri).value, "80")
+
+    def test_export_numbering_restarts_each_day(self):
+        # Цикличность 2 -> два дня с визитами; «№ п/п» должен начинаться с 1 в каждом.
+        points = [
+            Point(
+                id="A001", trade_rep_code="TP1", frequency=2, locality="Москва",
+                street="ул ленина", house="1",
+                original={"Единый код": "A001", "Код торгового представителя": "TP1"},
+            )
+        ]
+        result = build_route(points, date(2026, 9, 1), date(2026, 9, 30))
+        data = export_route(io.BytesIO(template_bytes()), result, {p.id: p for p in points})
+        wb = load_workbook(io.BytesIO(data))
+        ws = wb.active
+        header = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+        ni = header.index("№ п/п") + 1
+        di = header.index("Дата визита") + 1
+        prev = None
+        days_seen = 0
+        for r in range(2, ws.max_row + 1):
+            d = ws.cell(row=r, column=di).value
+            if d is None:
+                continue
+            if d != prev:
+                self.assertEqual(
+                    ws.cell(row=r, column=ni).value, 1,
+                    f"день {d} должен начинаться с № 1",
+                )
+                days_seen += 1
+                prev = d
+        self.assertGreaterEqual(days_seen, 2)  # два дня с визитами
 
 
 if __name__ == "__main__":

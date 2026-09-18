@@ -116,6 +116,45 @@ class TestParser(unittest.TestCase):
         self.assertEqual(points[0].score, 4.0)
         self.assertEqual(points[0].result, 80.0)
 
+    def test_percent_format_preserved_in_original(self):
+        # Ячейка «Результат» = 0.9 в формате «0%» (в Excel видно «90%»).
+        # Парсер должен сохранить видимое значение «90%», а не сырое 0.9.
+        header = PLANNING_COLUMNS + ["Результат"]
+        wb = Workbook()
+        ws = wb.active
+        ws.append(header)
+        d = {c: "" for c in header}
+        d.update({
+            "Единый код": "A001", "Населенный пункт": "Москва", "Тип улицы": "ул.",
+            "Название улицы": "Ленина", "Номер дома": "1", "Цикличность": 1,
+            "Код торгового представителя": "TP1",
+        })
+        ws.append([d[c] for c in header])
+        col = header.index("Результат") + 1
+        cell = ws.cell(row=2, column=col)
+        cell.value = 0.9
+        cell.number_format = "0%"
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        points = parse_planning(buf)
+        self.assertEqual(points[0].result, 0.9)  # алгоритм видит сырое число
+        self.assertEqual(points[0].original["Результат"], "90%")  # выгрузка — «90%»
+
+    def test_score_string_net_is_unknown(self):
+        # «нет» в колонке Оценка — как «не оценено» (None), но в выгрузке — как есть.
+        header = PLANNING_COLUMNS + ["Оценка"]
+        d = {c: "" for c in header}
+        d.update({
+            "Единый код": "A001", "Населенный пункт": "Москва", "Тип улицы": "ул.",
+            "Название улицы": "Ленина", "Номер дома": "1", "Цикличность": 1,
+            "Код торгового представителя": "TP1", "Оценка": "нет",
+        })
+        points = parse_planning(xlsx_with(header, [[d[c] for c in header]]))
+        self.assertIsNone(points[0].score)
+        self.assertEqual(points[0].original["Оценка"], "нет")  # исходное значение сохранено
+
 
 if __name__ == "__main__":
     unittest.main()

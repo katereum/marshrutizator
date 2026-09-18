@@ -53,16 +53,19 @@ def _node_distance(
     return distance
 
 
-def _total_km(schedules: list[DaySchedule], home, node_distance) -> float:
-    """Суммарный километраж всех дней (дом -> точки -> дом)."""
+def _total_km(schedules: list[DaySchedule], node_distance, day_home_dist) -> float:
+    """Суммарный километраж всех дней (дом -> точки -> дом).
+
+    `day_home_dist(day_idx, point_id) -> км` — расстояние от дома соответствующего
+    дня до точки (0, если дома для дня нет).
+    """
     total = 0.0
-    for day in schedules:
+    for idx, day in enumerate(schedules):
         ids = day.ordered_visits
         if not ids:
             continue
-        if home is not None:
-            total += node_distance(HOME_ID, _pid(ids[0]))
-            total += node_distance(_pid(ids[-1]), HOME_ID)
+        total += day_home_dist(idx, _pid(ids[0]))
+        total += day_home_dist(idx, _pid(ids[-1]))
         for a, b in zip(ids, ids[1:]):
             total += node_distance(_pid(a), _pid(b))
     return total
@@ -78,11 +81,16 @@ def build_route(
     eps_km: float = 5.0,
     work_on_weekends: bool = False,
     home: tuple[float, float] | None = None,
+    home_by_weekday: dict[int, tuple[float, float]] | None = None,
     road_matrix: dict | None = None,
     focus: str = FOCUS_ECONOMY,
     caps: list[int] | None = None,
 ) -> RouteResult:
-    """Строит месячный маршрут для набора точек одного сотрудника."""
+    """Строит месячный маршрут для набора точек одного сотрудника.
+
+    `home` — базовый дом (по умолчанию для всех дней). `home_by_weekday` —
+    переопределение дома для конкретного дня недели (0=Пн..6=Вс).
+    """
     days = working_days(period_start, period_end, work_on_weekends)
     if not days:
         raise ValueError("В периоде нет рабочих дней")
@@ -93,13 +101,35 @@ def build_route(
     visits, warnings = expand_visits(points, n_days, cluster)
 
     coords = {p.id: (p.latitude, p.longitude) for p in points if p.has_coords}
+    if caps is not None and sum(caps) < len(visits):
+        floor = (len(visits) + n_days - 1) // n_days
+        warnings.append(
+            f"Лимит точек в день не вмещает все визиты: {len(visits)} визитов при "
+            f"суммарной ёмкости {sum(caps)}. Лимиты смягчены до минимум {floor} в день."
+        )
     day_visits, load = assign_days(visits, n_days, dist_fn=node_distance, coords=coords, caps=caps)
 
     point_by_id = {p.id: p for p in points}
     points_by_visit = {v.visit_id: point_by_id[v.point_id] for v in visits}
 
     visit_dist = lambda a, b: node_distance(_pid(a), _pid(b))
-    visit_home_dist = (lambda v: node_distance(HOME_ID, _pid(v))) if home is not None else None
+
+    # Дом конкретного дня: переопределение по дню недели, иначе базовый дом.
+    def day_home(d: int):
+        if home_by_weekday is None:
+            return home
+        return home_by_weekday.get(days[d].weekday(), home)
+
+    def day_home_dist(idx: int, pid: str) -> float:
+        h = day_home(idx)
+        if h is None:
+            return 0.0
+        if home is not None and h == home:
+            return node_distance(HOME_ID, pid)
+        p = point_by_id.get(pid)
+        if p is None or not p.has_coords:
+            return 0.0
+        return haversine_km(h[0], h[1], p.latitude, p.longitude)
 
     # Мягкий приоритет: вес λ = половина типичного расстояния между соседними точками,
     # чтобы приоритет переставлял точки внутри района, не ломая географию.
@@ -109,8 +139,10 @@ def build_route(
 
     schedules: list[DaySchedule] = []
     for d in range(n_days):
+        h = day_home(d)
+        home_dist = (lambda v, d=d: day_home_dist(d, _pid(v))) if h is not None else None
         ordered = order_day(
-            day_visits[d], points_by_visit, home, visit_dist, visit_home_dist,
+            day_visits[d], points_by_visit, h, visit_dist, home_dist,
             priority=priority, priority_weight=priority_weight,
         )
         schedules.append(
@@ -135,7 +167,7 @@ def build_route(
         total_visits=len(visits),
         per_day_load=load,
         violations=violations,
-        total_km=_total_km(schedules, home, node_distance),
+        total_km=_total_km(schedules, node_distance, day_home_dist),
     )
     result.stats.score = route_score(result, points, cluster)
     return result
@@ -150,6 +182,7 @@ def build_routes(
     eps_km: float = 5.0,
     work_on_weekends: bool = False,
     home: tuple[float, float] | None = None,
+    home_by_weekday: dict[int, tuple[float, float]] | None = None,
     road_matrix: dict | None = None,
     focus: str = FOCUS_ECONOMY,
     caps: list[int] | None = None,
@@ -171,6 +204,7 @@ def build_routes(
                 eps_km=eps_km,
                 work_on_weekends=work_on_weekends,
                 home=home,
+                home_by_weekday=home_by_weekday,
                 road_matrix=road_matrix,
                 focus=focus,
                 caps=caps,

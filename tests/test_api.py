@@ -93,7 +93,7 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.headers["content-type"], XLSX_MIME)
 
-    def test_optimize_fails_without_road_matrix(self):
+    def test_optimize_falls_back_without_road_matrix(self):
         planning = make_xlsx(
             PLANNING_COLUMNS,
             [planning_row("A001", 1), planning_row("A002", 1)],
@@ -125,8 +125,55 @@ class TestAPI(unittest.TestCase):
                 },
             )
 
-        self.assertEqual(r.status_code, 422)
-        self.assertEqual(r.json()["error"]["code"], "OPTIMIZATION_ERROR")
+        # Нет дорожной матрицы -> откат на прямые расстояния с предупреждением.
+        self.assertEqual(r.status_code, 202)
+        jid = r.json()["job_id"]
+        r2 = self.client.get(f"/api/result/{jid}")
+        self.assertEqual(r2.json()["status"], "COMPLETED")
+        self.assertTrue(any("прямым" in w for w in r2.json()["stats"][0]["warnings"]))
+
+    def test_optimize_capacity_mismatch_needs_confirmation(self):
+        # 3 визита, но лимит 2/день на 22 рабочих дня = 44 слота — не сходится.
+        planning = make_xlsx(
+            PLANNING_COLUMNS,
+            [planning_row("A001", 1), planning_row("A002", 1), planning_row("A003", 1)],
+        )
+        r = self.client.post("/api/upload/planning", files={"file": ("planning.xlsx", planning, XLSX_MIME)})
+        pid = r.json()["file_id"]
+
+        template = make_xlsx(RESULT_COLUMNS, [["" for _ in RESULT_COLUMNS]])
+        r = self.client.post("/api/upload/route-template", files={"file": ("template.xlsx", template, XLSX_MIME)})
+        tid = r.json()["file_id"]
+
+        body = {
+            "planning_file_id": pid,
+            "route_template_file_id": tid,
+            "period_start": "2026-09-01",
+            "period_end": "2026-09-30",
+            "points_per_day": 2,
+        }
+        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road, patch("backend.app.route_geometry") as mock_route_geo:
+            mock_geo.geocode.return_value = (55.75, 37.61)
+            mock_road.matrix.return_value = [[0.0] * 3 for _ in range(3)]
+            mock_route_geo.route.return_value = None
+            r = self.client.post("/api/optimize", json=body)
+
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertTrue(data["needs_confirmation"])
+        self.assertEqual(data["total_visits"], 3)
+        self.assertLess(data["difference"], 0)  # не хватает
+
+        # confirm=true → оптимизация проходит.
+        body["confirm"] = True
+        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road, patch("backend.app.route_geometry") as mock_route_geo:
+            mock_geo.geocode.return_value = (55.75, 37.61)
+            mock_road.matrix.return_value = [[0.0] * 3 for _ in range(3)]
+            mock_route_geo.route.return_value = None
+            r = self.client.post("/api/optimize", json=body)
+
+        self.assertEqual(r.status_code, 202)
+        self.assertIn("job_id", r.json())
 
     def test_upload_missing_column_returns_error(self):
         header = [c for c in PLANNING_COLUMNS if c != "Цикличность"]

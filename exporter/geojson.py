@@ -26,10 +26,25 @@ def _compact_address(point: Point) -> str:
     return ", ".join(x for x in [point.locality, point.street, point.house] if x and x.strip())
 
 
+def _display(point: Point, key: str) -> str:
+    """Исходное значение колонки без учёта регистра (для подсказки на карте).
+
+    Парсер уже сохранил видимое значение («90%», «нет»), поэтому здесь возвращаем
+    его как есть; пусто -> «—».
+    """
+    o = point.original or {}
+    for k, v in o.items():
+        if str(k).strip().lower() == key.lower():
+            s = str(v).strip() if v is not None else ""
+            return s if s else "—"
+    return "—"
+
+
 def build_geojson(
     results: list[RouteResult],
     points_by_id: dict[str, Point],
     home: tuple[float, float] | None = None,
+    home_by_weekday: dict[int, tuple[float, float]] | None = None,
     geometries: dict[tuple[str, str], list[list[float]]] | None = None,
 ) -> dict:
     """Собирает GeoJSON маршрутов (R7): линии по дням + точки-маркеры.
@@ -37,8 +52,16 @@ def build_geojson(
     `geometries` — дорожные полилинии {(employee, date.isoformat()): [[lon, lat], ...]}.
     Если для дня полилиния есть, линия идёт по дорогам; иначе — по прямой
     между точками (fallback).
+
+    Точки несут в свойствах `score`/`result`/`priority`, чтобы фронтенд мог
+    раскрасить маркеры по рейтингу (проблемные/средние/хорошие).
     """
     geometries = geometries or {}
+
+    # Единая карта приоритетов по всем сотрудникам (point_id -> 0..1).
+    priority_by_id: dict[str, float] = {}
+    for r in results:
+        priority_by_id.update(r.priority or {})
     features = []
     for result in results:
         for day in result.days:
@@ -49,8 +72,11 @@ def build_geojson(
                     point = points_by_id.get(vid.rsplit("#", 1)[0])
                     if point is not None and point.has_coords:
                         coords.append([point.longitude, point.latitude])
-                if home is not None and coords:
-                    coords = [[home[1], home[0]]] + coords + [[home[1], home[0]]]
+                h = home
+                if home_by_weekday is not None:
+                    h = home_by_weekday.get(day.weekday, home)
+                if h is not None and coords:
+                    coords = [[h[1], h[0]]] + coords + [[h[1], h[0]]]
                 line = coords
             if line is not None and len(line) >= 2:
                 features.append(
@@ -77,6 +103,11 @@ def build_geojson(
                     "code": point.id,
                     "address": _compact_address(point),
                     "employee": point.trade_rep_code,
+                    "score": point.score,
+                    "result": point.result,
+                    "score_text": _display(point, "Оценка"),
+                    "result_text": _display(point, "Результат"),
+                    "priority": round(priority_by_id.get(point.id, 0.0), 3),
                 },
                 "geometry": {"type": "Point", "coordinates": [point.longitude, point.latitude]},
             }

@@ -21,6 +21,7 @@ const planningInput = el("planning-file");
 const templateInput = el("template-file");
 const optimizeBtn = el("optimize-btn");
 const statusBox = el("status");
+const stageEl = el("stage");
 const resultBox = el("result");
 const mapSection = el("map-section");
 
@@ -39,20 +40,37 @@ function setStatus(text, isError = false) {
   statusBox.textContent = text;
 }
 
+// Фраза текущего этапа (под кнопкой, рядом с машинкой).
+function setStage(text) {
+  if (stageEl) stageEl.textContent = text || "";
+}
+
 function refreshButton() {
   const ready = state.planningFileId && state.templateFileId;
   optimizeBtn.disabled = !ready;
   el("hint").textContent = ready ? "Всё готово, можно упорядочивать." : "Загрузите оба файла, чтобы начать.";
 }
 
+// Читает сообщение об ошибке из ответа, даже если это не JSON (текстовая 500).
+async function readErrorMessage(resp) {
+  const text = await resp.text();
+  if (!text) return `HTTP ${resp.status}`;
+  try {
+    const data = JSON.parse(text);
+    return data.error?.message || data.detail?.message || text;
+  } catch {
+    return text;
+  }
+}
+
 async function uploadFile(file, endpoint) {
   const fd = new FormData();
   fd.append("file", file);
   const resp = await fetch(endpoint, { method: "POST", body: fd });
-  const data = await resp.json();
   if (!resp.ok) {
-    throw new Error(data.error?.message || "Ошибка загрузки файла");
+    throw new Error(await readErrorMessage(resp));
   }
+  const data = await resp.json();
   return data.file_id;
 }
 
@@ -82,6 +100,17 @@ templateInput.addEventListener("change", async () => {
   }
 });
 
+// Сворачивание/разворачивание расширенных настроек.
+(function () {
+  const toggle = el("advanced-toggle");
+  if (!toggle) return;
+  toggle.addEventListener("click", () => {
+    const adv = el("advanced");
+    const nowHidden = adv.classList.toggle("hidden");
+    toggle.setAttribute("aria-expanded", nowHidden ? "false" : "true");
+  });
+})();
+
 function nextMonthPeriod() {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth() + 1, 1);
@@ -105,14 +134,26 @@ function currentPeriod() {
 
 function buildCapacity() {
   const def = el("capacity-default").value;
-  if (!def) return {};
-  const perDay = parseInt(def, 10);
   const overrides = {};
   for (let w = 0; w < 5; w++) {
     const v = el("cap-" + w).value;
     if (v) overrides[w] = parseInt(v, 10);
   }
-  return { points_per_day: perDay, points_per_day_overrides: overrides };
+  if (!def && !Object.keys(overrides).length) return {};
+  // Лимиты по дням работают и без «Общего»: общий тогда — авто-баланс.
+  return {
+    points_per_day: def ? parseInt(def, 10) : null,
+    points_per_day_overrides: overrides,
+  };
+}
+
+function buildHomeOverrides() {
+  const overrides = {};
+  for (let w = 0; w < 5; w++) {
+    const v = el("home-" + w).value.trim();
+    if (v) overrides[w] = v;
+  }
+  return overrides;
 }
 
 const WEEKDAYS_RU = [
@@ -143,6 +184,14 @@ function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
+}
+
+// Цвет точки по оценке (рейтинг): красный — проблемные, зелёный — хорошие.
+function scoreColor(score) {
+  if (score == null) return "#94a3b8"; // серый — не оценено
+  if (score <= 2) return "#e11d48";    // красный — проблемные
+  if (score <= 3) return "#f59e0b";    // янтарный — средние
+  return "#16a34a";                    // зелёный — хорошие
 }
 
 function fitMap(map, bounds) {
@@ -214,21 +263,30 @@ function renderMap(jobId) {
         routeBounds.push(...line);
       });
 
-      // Точки — всегда видимые маркеры с подсказкой по наведению.
+      // Точки — всегда видимые маркеры, раскрашенные по оценке (рейтингу).
       const pointsLayer = L.layerGroup();
       const pointsBounds = [];
       pointFeatures.forEach((p) => {
+        const pr = p.properties;
         const [lon, lat] = p.geometry.coordinates;
         const marker = L.circleMarker([lat, lon], {
-          radius: 5,
+          radius: 6,
           color: "#ffffff",
           weight: 1.5,
-          fillColor: "#d62828",
+          fillColor: scoreColor(pr.score),
           fillOpacity: 1,
         });
+
+        const scoreTxt = pr.score_text && pr.score_text !== "—" ? pr.score_text : "";
+        const resultTxt = pr.result_text && pr.result_text !== "—" ? pr.result_text : "";
+        let meta = "";
+        if (scoreTxt) meta += `<span class="pt-meta">Оценка: <b>${escapeHtml(scoreTxt)}</b></span>`;
+        if (resultTxt) meta += `<span class="pt-meta">Результат: <b>${escapeHtml(resultTxt)}</b></span>`;
+        if (pr.priority > 0) meta += `<span class="pt-meta">Приоритет: <b>${pr.priority}</b></span>`;
+
         marker.bindTooltip(
-          `<span class="pt-code">${escapeHtml(p.properties.code)}</span>` +
-          `<span class="pt-addr">${escapeHtml(p.properties.address)}</span>`,
+          `<span class="pt-code">${escapeHtml(pr.code)}</span>` +
+          `<span class="pt-addr">${escapeHtml(pr.address)}</span>` + meta,
           { direction: "top", offset: [0, -6], className: "point-tooltip", opacity: 1 }
         );
         pointsLayer.addLayer(marker);
@@ -283,9 +341,9 @@ function runStageSequence() {
   setCarProgress(0);
   const timer = setInterval(() => {
     if (i < STAGES.length) {
-      setStatus(STAGES[i]);
-      // Машинка едет вправо по мере прохождения этапов (до 80% — финальный
-      // рывок происходит по факту готовности маршрута).
+      setStage(STAGES[i]);
+      // Машинка едет по дорожке под кнопкой по мере прохождения этапов
+      // (до 80% — финальный рывок по факту готовности маршрута).
       setCarProgress(0.8 * ((i + 1) / STAGES.length));
       i += 1;
     } else {
@@ -295,32 +353,75 @@ function runStageSequence() {
   return () => clearInterval(timer);
 }
 
+function buildOptimizeBody(confirm) {
+  const period = currentPeriod();
+  return JSON.stringify({
+    planning_file_id: state.planningFileId,
+    route_template_file_id: state.templateFileId,
+    period_start: period.start,
+    period_end: period.end,
+    home_address: el("home-address").value.trim() || null,
+    home_address_overrides: buildHomeOverrides(),
+    focus: el("focus").value,
+    ...buildCapacity(),
+    confirm,
+  });
+}
+
+async function runOptimize(confirm) {
+  const resp = await fetch("/api/optimize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: buildOptimizeBody(confirm),
+  });
+  if (!resp.ok) throw new Error(await readErrorMessage(resp));
+  return await resp.json();
+}
+
+// Спрашивает подтверждение при расхождении лимитов с реальным числом визитов.
+function confirmCapacity(data) {
+  return new Promise((resolve) => {
+    const modal = el("confirm-modal");
+    const text = el("confirm-text");
+    const okBtn = el("confirm-ok");
+    const cancelBtn = el("confirm-cancel");
+    const diff = data.difference;
+    if (diff > 0) {
+      text.textContent = `В базе ${data.total_visits} визитов, а лимиты вмещают ${data.target_capacity} — лишних ${diff}. Предлагаю смягчить лимиты и распределить равномерно. Продолжить?`;
+    } else {
+      text.textContent = `В базе ${data.total_visits} визитов, а по лимитам нужно ${data.target_capacity} — не хватает ${-diff}. Предлагаю распределить равномерно (~${data.avg_per_day} в день). Продолжить?`;
+    }
+    modal.classList.remove("hidden");
+    const cleanup = () => {
+      modal.classList.add("hidden");
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+    };
+    okBtn.onclick = () => { cleanup(); resolve(true); };
+    cancelBtn.onclick = () => { cleanup(); resolve(false); };
+  });
+}
+
 optimizeBtn.addEventListener("click", async () => {
   resultBox.classList.add("hidden");
   mapSection.classList.add("hidden");
   const stopStages = runStageSequence();
   try {
-    const period = currentPeriod();
-    const resp = await fetch("/api/optimize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        planning_file_id: state.planningFileId,
-        route_template_file_id: state.templateFileId,
-        period_start: period.start,
-        period_end: period.end,
-        home_address: el("home-address").value.trim() || null,
-        focus: el("focus").value,
-        ...buildCapacity(),
-      }),
-    });
-    if (!resp.ok) {
-      const data = await resp.json();
-      throw new Error(data.error?.message || "Ошибка оптимизации");
+    let data = await runOptimize(false);
+    if (data.needs_confirmation) {
+      const ok = await confirmCapacity(data);
+      if (!ok) {
+        stopStages();
+        setCarProgress(0);
+        setStage("");
+        return;
+      }
+      data = await runOptimize(true);
     }
-    const { job_id } = await resp.json();
+    const job_id = data.job_id;
     state.jobId = job_id;
     stopStages();
+    setStage("");
     setStatus("Маршрут готов!");
     setCarProgress(1);
     setTimeout(() => setCarProgress(0), 2600);
@@ -333,8 +434,15 @@ optimizeBtn.addEventListener("click", async () => {
       .then((data) => {
         const stats = data.stats && data.stats[0];
         const meta = el("result-meta");
+        const parts = [];
         if (stats && typeof stats.total_km === "number") {
-          meta.textContent = `Километраж по маршруту: ~${stats.total_km} км`;
+          parts.push(`Километраж по маршруту: ~${stats.total_km} км`);
+        }
+        if (stats && Array.isArray(stats.warnings) && stats.warnings.length) {
+          parts.push("Внимание: " + stats.warnings[0]);
+        }
+        if (parts.length) {
+          meta.textContent = parts.join(". ");
           meta.classList.remove("hidden");
         }
       })
@@ -342,42 +450,39 @@ optimizeBtn.addEventListener("click", async () => {
   } catch (err) {
     stopStages();
     setCarProgress(0);
+    setStage("");
     setStatus(err.message, true);
   }
 });
 
-// Кабриолет с лисом ездит только по красному фону (hero) слева направо,
-// отражая прогресс формирования маршрута, и возвращается на место.
+// Машинка с лисом ездит по дорожке под кнопкой (прогресс) + тонкий прогресс-бар.
 (function () {
   const car = document.getElementById("car");
-  const hero = document.querySelector(".hero");
-  if (!car || !hero) return;
+  const track = document.getElementById("car-track");
+  const bar = document.getElementById("progress");
+  const fill = document.getElementById("progress-fill");
 
   const state = { target: 0, shown: 0 };
 
   window.setCarProgress = function (p) {
-    state.target = Math.max(0, Math.min(1, Number(p) || 0));
+    const v = Math.max(0, Math.min(1, Number(p) || 0));
+    state.target = v;
+    if (fill) fill.style.width = Math.round(v * 100) + "%";
+    if (bar) bar.classList.toggle("active", v > 0 && v < 1);
   };
   setCarProgress = window.setCarProgress;
 
-  function tick() {
-    // Плавное сглаживание к целевому прогрессу.
-    state.shown += (state.target - state.shown) * 0.08;
-    if (Math.abs(state.target - state.shown) < 0.0005) state.shown = state.target;
+  if (car && track) {
+    function tick() {
+      state.shown += (state.target - state.shown) * 0.08;
+      if (Math.abs(state.target - state.shown) < 0.0005) state.shown = state.target;
 
-    const rect = hero.getBoundingClientRect();
-    const carW = car.offsetWidth || 200;
-    const carH = car.offsetHeight || 90;
-    const pad = 14;
-
-    const minX = rect.left + pad;
-    const maxX = rect.right - carW - pad;
-    const y = rect.bottom - carH - pad;
-    const x = minX + (maxX - minX) * state.shown;
-
-    car.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      const tw = track.clientWidth || 1;
+      const cw = car.offsetWidth || 130;
+      const maxX = Math.max(0, tw - cw);
+      car.style.transform = `translateX(${maxX * state.shown}px)`;
+      requestAnimationFrame(tick);
+    }
     requestAnimationFrame(tick);
   }
-
-  requestAnimationFrame(tick);
 })();

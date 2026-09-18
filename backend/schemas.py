@@ -14,11 +14,16 @@ class OptimizeRequest(BaseModel):
     period_end: date
     work_on_weekends: bool = False
     home_address: str | None = None
+    # Переопределение дома по дням недели (0=Пн..6=Вс): {"1": "адрес для вторника"}.
+    home_address_overrides: dict[int, str] = {}
     # Акцент маршрута: экономия (по умолчанию) | проблемные | лучшие.
     focus: Literal["economy", "fix_problems", "top_performers"] = "economy"
     # Кол-во точек в день: по умолчанию и по дням недели (0=Пн..6=Вс).
     points_per_day: int | None = None
     points_per_day_overrides: dict[int, int] = {}
+    # Подтверждение после предупреждения о расхождении лимитов с реальным
+    # числом визитов (см. /api/optimize → needs_confirmation).
+    confirm: bool = False
     # Мягкие целевые ограничения (R3); ядро MVP балансирует к вычисленной цели.
     min_points_per_day: int | None = None
     max_points_per_day: int | None = None
