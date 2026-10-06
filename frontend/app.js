@@ -543,3 +543,58 @@ optimizeBtn.addEventListener("click", async () => {
     requestAnimationFrame(tick);
   }
 })();
+
+// ── Автодополнение адресов (DaData) ─────────────────────────────
+function setupAddressAutocomplete(input) {
+  if (!input) return;
+  let timer = null;
+  let dropdown = null;
+
+  function close() {
+    if (dropdown) { dropdown.remove(); dropdown = null; }
+  }
+
+  function show(items) {
+    close();
+    if (!items || !items.length) return;
+    dropdown = document.createElement("div");
+    dropdown.className = "address-suggest";
+    items.forEach((text) => {
+      const row = document.createElement("div");
+      row.className = "address-suggest-item";
+      row.textContent = text;
+      row.onmousedown = (e) => {
+        e.preventDefault();       // не даём полю потерять фокус до подстановки
+        input.value = text;
+        close();
+      };
+      dropdown.appendChild(row);
+    });
+    const host = input.parentElement;
+    if (host) {
+      host.style.position = "relative";
+      host.appendChild(dropdown);
+    }
+  }
+
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 3) { close(); return; }
+    timer = setTimeout(async () => {
+      try {
+        const resp = await fetch("/api/suggest/address?query=" + encodeURIComponent(q));
+        if (resp.ok) {
+          const data = await resp.json();
+          show(data.suggestions || []);
+        }
+      } catch (e) { /* тихо — автодополнение не критично */ }
+    }, 300);
+  });
+
+  input.addEventListener("blur", () => { setTimeout(close, 150); });
+  input.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+}
+
+setupAddressAutocomplete(el("home-address"));
+for (let w = 0; w < 5; w++) setupAddressAutocomplete(el("home-" + w));

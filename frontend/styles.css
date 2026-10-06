@@ -622,3 +622,33 @@ section.panel { padding: 28px; }
   color: #d62828;
   font-weight: 600;
 }
+
+/* ── Подсказки адресов (автодополнение DaData) ─────────────── */
+.address-suggest {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 3px;
+  z-index: 1000;
+  background: #fff;
+  border: 1px solid #d62828;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.address-suggest-item {
+  padding: 9px 12px;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  line-height: 1.35;
+}
+.address-suggest-item + .address-suggest-item {
+  border-top: 1px solid #f0f0f0;
+}
+.address-suggest-item:hover,
+.address-suggest-item:focus {
+  background: #fbeaea;
+}

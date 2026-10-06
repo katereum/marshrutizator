@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from exporter.exporter import export_route
 from exporter.geojson import build_geojson
+from geocoder.dadata import suggest_addresses
 from geocoder.offline import OfflineGeocoder
 from geocoder.yandex import YandexGeocoder
 from optimizer.models import HOME_ID, Point
@@ -101,6 +102,12 @@ async def _unhandled_error_handler(request, exc: Exception):
             }
         },
     )
+
+
+@app.get("/api/suggest/address")
+def suggest_address(query: str = ""):
+    """Автодополнение адресов через DaData (для поля «Домашний адрес» и оверрайдов)."""
+    return {"suggestions": suggest_addresses(query)}
 
 
 def _human_address(p: Point) -> str:
