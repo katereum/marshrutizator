@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 from openpyxl import load_workbook, Workbook
 
-from exporter.exporter import export_route
+from exporter.exporter import _output_columns, export_route
 from optimizer.models import Point
 from optimizer.pipeline import build_route
 from parser.columns import RESULT_COLUMNS
@@ -22,6 +22,23 @@ def template_bytes():
 
 
 class TestExporter(unittest.TestCase):
+    def test_output_columns_without_score_result(self):
+        points = [Point(id="A001", trade_rep_code="TP1", frequency=1,
+                        original={"Единый код": "A001", "Населенный пункт": "Москва", "Цикличность": 1})]
+        cols = _output_columns(points)
+        self.assertNotIn("Оценка", cols)
+        self.assertNotIn("Результат", cols)
+        self.assertNotIn("Приоритет", cols)
+        self.assertIn("Сколько раз посещаем в месяц", cols)
+
+    def test_output_columns_with_score_adds_priority(self):
+        points = [Point(id="A001", trade_rep_code="TP1", frequency=1, score=3.0,
+                        original={"Единый код": "A001", "Населенный пункт": "Москва", "Оценка": 3})]
+        cols = _output_columns(points)
+        self.assertIn("Оценка", cols)
+        self.assertIn("Приоритет", cols)
+        self.assertNotIn("Результат", cols)
+
     def test_export_preserves_header_and_fills_values(self):
         points = [
             Point(
@@ -285,7 +302,10 @@ class TestExporter(unittest.TestCase):
         self.assertNotIn("Цикличность", header)
         self.assertNotIn("Код Супервайзера", header)
         self.assertIn("Регион", header)
-        self.assertIn("Приоритет", header)
+        # Без Оценки/Результата «Приоритет» не выводим — не из чего его считать.
+        self.assertNotIn("Оценка", header)
+        self.assertNotIn("Результат", header)
+        self.assertNotIn("Приоритет", header)
         # Значения заполнены.
         self.assertEqual(ws.cell(row=2, column=header.index("Регион") + 1).value, "Центр")
         self.assertEqual(ws.cell(row=2, column=header.index("Сколько раз посещаем в месяц") + 1).value, 2)

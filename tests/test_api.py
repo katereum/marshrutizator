@@ -307,8 +307,9 @@ class TestAPI(unittest.TestCase):
         header = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
         self.assertIn("Дата визита", header)
         self.assertIn("Единый код", header)
-        self.assertIn("Оценка", header)
-        self.assertIn("Приоритет", header)
+        # Оценка/Приоритет появляются только если есть в базе (здесь их нет).
+        self.assertNotIn("Оценка", header)
+        self.assertNotIn("Приоритет", header)
 
     def test_upload_missing_secondary_columns_ok(self):
         # Второстепенные колонки («Код Супервайзера», «Старый код», «Статус» …) не обязательны.
