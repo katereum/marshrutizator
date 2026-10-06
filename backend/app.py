@@ -310,13 +310,20 @@ def optimize(req: OptimizeRequest):
 
     missing = [p for p in points if not p.has_coords]
     if missing:
-        raise OptimizationError(
+        reason = getattr(geocoder, "last_error", None)
+        msg = (
             "Не удалось геокодировать все точки — без координат невозможно "
-            "построить маршрут по дорогам. Проверьте адреса и лимит геокодера.",
+            "построить маршрут по дорогам."
+        )
+        if reason:
+            msg += f" Причина: {reason}."
+        logger.error("Геокодирование не удалось: %s", reason)
+        raise OptimizationError(
+            msg,
             {
                 "count": len(missing),
                 "points": [{"id": p.id, "address": _human_address(p)} for p in missing[:20]],
-                "geocoder": getattr(geocoder, "last_error", None),
+                "geocoder": reason,
             },
         )
 
