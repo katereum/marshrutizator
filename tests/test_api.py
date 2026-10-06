@@ -5,7 +5,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
 
-from backend.app import _build_road_matrix, app, store
+from backend.app import _build_road_matrix, _human_address, app, store
 from optimizer.models import Point
 from parser.columns import PLANNING_COLUMNS, RESULT_COLUMNS
 
@@ -236,6 +236,32 @@ class TestAPI(unittest.TestCase):
             mock_geo.geocode.return_value = (55.75, 37.61)
             r = self.client.post("/api/optimize", json=body)
         self.assertEqual(r.status_code, 202)
+
+    def test_human_address_resolves_column_aliases(self):
+        # Колонки названы иначе («Город», «Улица», «Дом», «Тип») — адрес должен собираться по синонимам.
+        p = Point(
+            id="A1", trade_rep_code="TP1", frequency=1,
+            locality="Москва", street="шоссе Бесединское", house="15",
+            original={"Город": "Москва", "Тип": "шоссе", "Улица": "Бесединское", "Дом": "15"},
+        )
+        self.assertEqual(_human_address(p), "Москва, шоссе Бесединское, 15")
+
+    def test_optimize_with_aliased_address_columns(self):
+        header = ["Код точки", "Город", "Тип", "Улица", "Дом", "Сколько раз посещаем в месяц", "ТП"]
+        rows = [["A001", "Москва", "шоссе", "Бесединское", "15", 1, "TP1"]]
+        r = self.client.post("/api/upload/planning", files={"file": ("p.xlsx", make_xlsx(header, rows), XLSX_MIME)})
+        self.assertEqual(r.status_code, 200, r.text)
+        pid = r.json()["file_id"]
+
+        body = {"planning_file_id": pid, "period_start": "2026-09-01", "period_end": "2026-09-30"}
+        with patch("backend.app.geocoder") as mock_geo:
+            mock_geo.geocode.return_value = (55.75, 37.61)
+            r = self.client.post("/api/optimize", json=body)
+        self.assertEqual(r.status_code, 202, r.text)
+        mock_geo.geocode.assert_called()
+        addr = mock_geo.geocode.call_args[0][0]
+        self.assertIn("Москва", addr)
+        self.assertIn("Бесединское", addr)
 
     def test_upload_missing_column_returns_error(self):
         # «Название улицы» (адрес) — обязательна в шапке.

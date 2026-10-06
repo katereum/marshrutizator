@@ -38,6 +38,7 @@ from parser import (
     parse_planning_with_duplicates,
     read_template_header,
     require_extension,
+    resolve_column,
     validate_template_header,
 )
 
@@ -103,10 +104,11 @@ async def _unhandled_error_handler(request, exc: Exception):
 
 
 def _human_address(p: Point) -> str:
+    """Собирает адрес для геокодера, понимая синонимы названий колонок."""
     o = p.original
 
     def s(key: str) -> str:
-        v = o.get(key)
+        v = resolve_column(o, key)
         return str(v).strip() if v is not None else ""
 
     street = " ".join(x for x in [s("Тип улицы"), s("Название улицы")] if x)
