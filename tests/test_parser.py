@@ -53,8 +53,18 @@ class TestParser(unittest.TestCase):
         self.assertIn("Цикличность", str(cm.exception))
 
     def test_empty_required_field(self):  # Тест №7
+        # Код и цикличность обязательны; адресные поля — нет.
         with self.assertRaises(ValidationError):
-            parse_planning(xlsx_with(PLANNING_COLUMNS, [row(**{"Название улицы": ""})]))
+            parse_planning(xlsx_with(PLANNING_COLUMNS, [row(**{"Единый код": ""})]))
+
+    def test_empty_address_fields_allowed(self):
+        # Город/улица могут быть пустыми — точка всё равно парсится.
+        points = parse_planning(xlsx_with(PLANNING_COLUMNS, [
+            row(**{"Населенный пункт": "", "Название улицы": ""})
+        ]))
+        self.assertEqual(len(points), 1)
+        self.assertEqual(points[0].id, "A001")
+        self.assertEqual(points[0].locality, "")
 
     def test_duplicate_code(self):  # Тест №8
         with self.assertRaises(ValidationError) as cm:

@@ -9,7 +9,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from optimizer.models import Point
 from optimizer.normalizer import canonical_address, normalize_street
 
-from .columns import CRITICAL_PLANNING_COLUMNS, resolve_column
+from .columns import REQUIRED_NON_EMPTY_COLUMNS, resolve_column
 from .errors import ValidationError
 from .validator import validate_planning_header
 
@@ -105,7 +105,7 @@ def parse_planning(fileobj) -> list[Point]:
             else:
                 original[key] = "" if val is None else val
 
-        for col in CRITICAL_PLANNING_COLUMNS:
+        for col in REQUIRED_NON_EMPTY_COLUMNS:
             if str(resolve_column(raw, col)).strip() == "":
                 raise ValidationError(f"Пустое обязательное поле «{col}» в строке {row_num}")
 
