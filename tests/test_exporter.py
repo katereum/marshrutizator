@@ -228,7 +228,7 @@ class TestExporter(unittest.TestCase):
 
 
     def test_export_without_template_generates_standard_sheet(self):
-        # Без шаблона — маршрутный лист создаётся с нуля: стандартные колонки + Оценка/Результат/Приоритет.
+        # Без шаблона — лист собирается из колонок базы + генерируемые в начале.
         points = [
             Point(
                 id="A001", trade_rep_code="TP1", frequency=1, locality="Москва",
@@ -247,13 +247,48 @@ class TestExporter(unittest.TestCase):
         wb = load_workbook(io.BytesIO(data))
         ws = wb.active
         header = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
-        self.assertEqual(header[: len(RESULT_COLUMNS)], RESULT_COLUMNS)
+        self.assertEqual(header[:3], ["№ п/п", "Дата визита", "День недели"])
+        self.assertEqual(header[3], "Единый код")
+        self.assertIn("Код торгового представителя", header)
         self.assertIn("Оценка", header)
         self.assertIn("Результат", header)
         self.assertIn("Приоритет", header)
         self.assertEqual(ws.cell(row=2, column=4).value, "A001")  # «Единый код»
         self.assertEqual(ws.cell(row=2, column=2).number_format, "DD.MM.YYYY")
         self.assertIn("Сводка", wb.sheetnames)
+
+    def test_export_without_template_mirrors_base_columns(self):
+        # База с ДРУГИМ порядком, БЕЗ «Код Супервайзера», но с ДОП. колонкой «Регион».
+        points = [
+            Point(
+                id="A001", trade_rep_code="TP1", frequency=2, locality="Москва",
+                street="ул ленина", house="1",
+                original={
+                    "Единый код": "A001",
+                    "Населенный пункт": "Москва",
+                    "Название улицы": "Ленина",
+                    "Цикличность": 2,
+                    "Регион": "Центр",  # дополнительная колонка
+                },
+            )
+        ]
+        result = build_route(points, date(2026, 9, 1), date(2026, 9, 30))
+        data = export_route(None, result, {p.id: p for p in points})
+
+        wb = load_workbook(io.BytesIO(data))
+        ws = wb.active
+        header = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+        self.assertEqual(header[:3], ["№ п/п", "Дата визита", "День недели"])
+        self.assertEqual(header[3], "Единый код")
+        # «Цикличность» переименована, отсутствующая колонка не добавлена, доп. — сохранена.
+        self.assertIn("Сколько раз посещаем в месяц", header)
+        self.assertNotIn("Цикличность", header)
+        self.assertNotIn("Код Супервайзера", header)
+        self.assertIn("Регион", header)
+        self.assertIn("Приоритет", header)
+        # Значения заполнены.
+        self.assertEqual(ws.cell(row=2, column=header.index("Регион") + 1).value, "Центр")
+        self.assertEqual(ws.cell(row=2, column=header.index("Сколько раз посещаем в месяц") + 1).value, 2)
 
 
 if __name__ == "__main__":

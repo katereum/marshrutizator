@@ -1,4 +1,10 @@
-"""Заполнение шаблона маршрутного листа или генерация листа с нуля (раздел 24 ТЗ, R6)."""
+"""Заполнение шаблона маршрутного листа или генерация листа с нуля (раздел 24 ТЗ, R6).
+
+Выгрузка строится ДИНАМИЧЕСКИ из колонок базы планирования: какие колонки есть
+в базе (и в каком порядке) — те и попадают в маршрутный лист, плюс три
+генерируемые в начале («№ п/п», «Дата визита», «День недели») и «Приоритет» в
+конце. «Цикличность» из базы переименовывается в «Сколько раз посещаем в месяц».
+"""
 from __future__ import annotations
 
 import io
@@ -9,7 +15,6 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 
 from optimizer.models import Point, RouteResult
-from parser.columns import RESULT_COLUMNS
 
 WEEKDAYS_RU = [
     "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье",
@@ -21,8 +26,9 @@ FOCUS_LABELS = {
     "top_performers": "Сначала лучшие",
 }
 
-# Колонки готового маршрутного листа, когда шаблон не загружен.
-DEFAULT_RESULT_COLUMNS = list(RESULT_COLUMNS) + ["Оценка", "Результат", "Приоритет"]
+# Генерируемые колонки, которых нет в базе планирования.
+GENERATED_PREFIX = ["№ п/п", "Дата визита", "День недели"]
+GENERATED_SUFFIX = ["Приоритет"]
 
 
 def _raw(point: Point, key: str):
@@ -44,14 +50,6 @@ def _result_display(point: Point) -> str:
     ячейки («0%» → «90%»), поэтому здесь просто возвращаем исходное значение.
     """
     return _raw(point, "Результат")
-
-
-def _find_column(col_index: dict, name: str):
-    """Колонка по имени без учёта регистра (Оценка/результат/Результат)."""
-    for hdr, col in col_index.items():
-        if str(hdr).strip().lower() == name.lower():
-            return col
-    return None
 
 
 def _find_header(ws) -> tuple[int, dict[str, int]] | None:
@@ -119,54 +117,73 @@ def _add_summary_sheet(wb, result: RouteResult, points_by_id: dict[str, Point]) 
         ws.cell(row=row, column=4, value=round(result.priority.get(p.id, 0.0), 2))
 
 
-def _route_row_values(point: Point, day, num: int, result: RouteResult) -> dict:
-    orig = point.original
-    return {
-        "№ п/п": num,
-        "Дата визита": day.date,
-        "День недели": WEEKDAYS_RU[day.weekday],
-        "Единый код": orig.get("Единый код", point.id),
-        "Старый код": orig.get("Старый код", ""),
-        "Статус": orig.get("Статус", ""),
-        "Населенный пункт": orig.get("Населенный пункт", ""),
-        "Тип улицы": orig.get("Тип улицы", ""),
-        "Название улицы": orig.get("Название улицы", ""),
-        "Номер дома": orig.get("Номер дома", ""),
-        "Номер строения": orig.get("Номер строения", ""),
-        "Номер корпуса": orig.get("Номер корпуса", ""),
-        "Станция метро": orig.get("Станция метро", ""),
-        "Дополнительное описание месторасположения точки": orig.get(
-            "Дополнительное описание месторасположения точки", ""
-        ),
-        "Партнер": orig.get("Партнер", ""),
-        "Субдилер": orig.get("Субдилер", ""),
-        "Субканал": orig.get("Субканал", ""),
-        "Код Супервайзера": orig.get("Код Супервайзера", ""),
-        "Код торгового представителя": orig.get("Код торгового представителя", ""),
-        "Сколько раз посещаем в месяц": point.frequency,
-        "Оценка": _raw(point, "Оценка"),
-        "Результат": _result_display(point),
-        "Приоритет": "" if result.priority.get(point.id) is None else round(result.priority[point.id], 2),
-    }
+def _output_columns(points) -> list[str]:
+    """Колонки готового листа: генерируемые + колонки базы (в порядке базы) + «Приоритет».
+
+    «Цикличность» из базы становится «Сколько раз посещаем в месяц». «Оценка» и
+    «Результат» добавляются только если их нет в базе (иначе они уже среди колонок
+    базы на своём месте). Пустые заголовки пропускаются.
+    """
+    base: list[str] = []
+    for p in points:
+        if p.original:
+            base = list(p.original.keys())
+            break
+
+    cols: list[str] = list(GENERATED_PREFIX)
+    for c in base:
+        name = str(c).strip()
+        if not name:
+            continue
+        if name.lower() == "цикличность":
+            cols.append("Сколько раз посещаем в месяц")
+        else:
+            cols.append(name)
+
+    have = {c.lower() for c in cols}
+    for extra in ("Оценка", "Результат", *GENERATED_SUFFIX):
+        if extra.lower() not in have:
+            cols.append(extra)
+    return cols
+
+
+def _route_value(point: Point, day, num: int, result: RouteResult, name: str):
+    """Значение для колонки выгрузки: сгенерированное или из базы (без учёта регистра)."""
+    n = str(name).lower()
+    if n == "№ п/п":
+        return num
+    if n == "дата визита":
+        return day.date
+    if n == "день недели":
+        return WEEKDAYS_RU[day.weekday]
+    if n == "сколько раз посещаем в месяц":
+        return point.frequency
+    if n == "оценка":
+        return _raw(point, "Оценка")
+    if n == "результат":
+        return _result_display(point)
+    if n == "приоритет":
+        return "" if result.priority.get(point.id) is None else round(result.priority[point.id], 2)
+    # Остальные колонки — как есть из базы (без учёта регистра).
+    for k, v in (point.original or {}).items():
+        if str(k).strip().lower() == n:
+            return "" if v is None else v
+    return point.id if n == "единый код" else ""
 
 
 def _fill_route_rows(ws, col_index: dict, write_row: int, sample_row, result: RouteResult, points_by_id: dict) -> None:
-    """Заполняет строки маршрута по колонкам col_index (имя -> индекс)."""
+    """Заполняет строки маршрута по колонкам col_index (имя -> индекс), в порядке колонок."""
     for day in result.days:
         num = 1  # нумерация «№ п/п» начинается заново каждый день
         for vid in day.ordered_visits:
             point = points_by_id.get(vid.rsplit("#", 1)[0])
             if point is None:
                 continue
-            values = _route_row_values(point, day, num, result)
-            for name, value in values.items():
-                column = _find_column(col_index, name)
-                if column is None:
-                    continue
-                cell = ws.cell(row=write_row, column=column, value=value)
+            for name, column in col_index.items():
+                cell = ws.cell(row=write_row, column=column, value=_route_value(point, day, num, result, name))
                 if sample_row is not None:
                     _copy_style(cell, ws.cell(row=sample_row, column=column))
-                if name == "Дата визита":
+                if str(name).lower() == "дата визита":
                     # Настоящая дата, всегда в формате ДД.ММ.ГГГГ (1 июля = 01.07).
                     cell.number_format = "DD.MM.YYYY"
             num += 1
@@ -174,14 +191,14 @@ def _fill_route_rows(ws, col_index: dict, write_row: int, sample_row, result: Ro
 
 
 def _export_route_from_scratch(result: RouteResult, points_by_id: dict[str, Point]) -> bytes:
-    """Создаёт маршрутный лист с нуля: стандартные колонки + Оценка/Результат/Приоритет."""
+    """Создаёт маршрутный лист с нуля: колонки — из базы планирования, а не фиксированные."""
     wb = Workbook()
     ws = wb.active
     assert ws is not None
     ws.title = "Маршрут"
     header_row = 1
     col_index = {}
-    for c, name in enumerate(DEFAULT_RESULT_COLUMNS, start=1):
+    for c, name in enumerate(_output_columns(points_by_id.values()), start=1):
         cell = ws.cell(row=header_row, column=c, value=name)
         cell.font = Font(bold=True)
         col_index[name] = c
