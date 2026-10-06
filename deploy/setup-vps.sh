@@ -14,7 +14,7 @@ apt-get install -y python3 python3-venv python3-pip git
 
 echo "==> Клонирую репозиторий…"
 if [ -d "$APP_DIR/.git" ]; then
-  cd "$APP_DIR" && git pull --ff-only
+  cd "$APP_DIR" && git fetch origin && git reset --hard origin/main
 else
   git clone "$REPO" "$APP_DIR"
 fi
