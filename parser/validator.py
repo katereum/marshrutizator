@@ -1,7 +1,11 @@
 """Проверка структуры Excel-файлов (раздел 12 ТЗ)."""
 from __future__ import annotations
 
-from .columns import PLANNING_COLUMNS, RESULT_COLUMNS
+from .columns import (
+    CRITICAL_PLANNING_COLUMNS,
+    RESULT_COLUMNS,
+    column_aliases,
+)
 from .errors import FileError, ValidationError
 
 
@@ -16,7 +20,13 @@ def missing_columns(header: list, required: list[str]) -> list[str]:
 
 
 def validate_planning_header(header: list) -> None:
-    missing = missing_columns(header, PLANNING_COLUMNS)
+    # Обязательны только критичные для маршрута колонки, причём по синонимам
+    # (без учёта регистра): «Код Супервайзера» и прочие второстепенные — опциональны.
+    present = {str(h).strip().lower() for h in header if h is not None and str(h).strip()}
+    missing = [
+        c for c in CRITICAL_PLANNING_COLUMNS
+        if not any(a.lower() in present for a in column_aliases(c))
+    ]
     if missing:
         raise ValidationError(
             f"Отсутствует обязательный столбец: {missing[0]}",

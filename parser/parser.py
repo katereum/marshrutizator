@@ -9,7 +9,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from optimizer.models import Point
 from optimizer.normalizer import canonical_address, normalize_street
 
-from .columns import CRITICAL_PLANNING_COLUMNS
+from .columns import CRITICAL_PLANNING_COLUMNS, resolve_column
 from .errors import ValidationError
 from .validator import validate_planning_header
 
@@ -106,33 +106,35 @@ def parse_planning(fileobj) -> list[Point]:
                 original[key] = "" if val is None else val
 
         for col in CRITICAL_PLANNING_COLUMNS:
-            if str(raw.get(col, "")).strip() == "":
+            if str(resolve_column(raw, col)).strip() == "":
                 raise ValidationError(f"Пустое обязательное поле «{col}» в строке {row_num}")
 
-        code = str(raw["Единый код"]).strip()
+        code = str(resolve_column(raw, "Единый код")).strip()
         if code in seen_codes:
             raise ValidationError(f"Дублирующийся Единый код: {code}")
         seen_codes.add(code)
 
         try:
-            frequency = int(float(str(raw["Цикличность"]).strip()))
+            frequency = int(float(str(resolve_column(raw, "Цикличность")).strip()))
         except ValueError:
             raise ValidationError(
-                f"Некорректная цикличность в строке {row_num}: «{raw['Цикличность']}»"
+                f"Некорректная цикличность в строке {row_num}: «{resolve_column(raw, 'Цикличность')}»"
             )
         if frequency < 1:
             raise ValidationError(f"Цикличность должна быть >= 1 (строка {row_num})")
 
-        locality = str(raw["Населенный пункт"]).strip()
-        metro = str(raw["Станция метро"]).strip()
-        house = str(raw["Номер дома"]).strip()
-        street = normalize_street(f"{raw['Тип улицы']} {raw['Название улицы']}".strip())
+        locality = str(resolve_column(raw, "Населенный пункт")).strip()
+        metro = str(resolve_column(raw, "Станция метро")).strip()
+        house = str(resolve_column(raw, "Номер дома")).strip()
+        street = normalize_street(
+            f"{resolve_column(raw, 'Тип улицы')} {resolve_column(raw, 'Название улицы')}".strip()
+        )
         address = canonical_address(locality, metro, street, house)
 
         points.append(
             Point(
                 id=code,
-                trade_rep_code=str(raw["Код торгового представителя"]).strip(),
+                trade_rep_code=str(resolve_column(raw, "Код торгового представителя")).strip(),
                 frequency=frequency,
                 locality=locality,
                 street=street,

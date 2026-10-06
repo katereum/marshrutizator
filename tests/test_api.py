@@ -222,6 +222,28 @@ class TestAPI(unittest.TestCase):
         self.assertIn("Оценка", header)
         self.assertIn("Приоритет", header)
 
+    def test_upload_missing_secondary_columns_ok(self):
+        # Второстепенные колонки («Код Супервайзера», «Старый код», «Статус» …) не обязательны.
+        header = ["Единый код", "Населенный пункт", "Название улицы", "Цикличность"]
+        rows = [["A001", "Москва", "Ленина", 1]]
+        r = self.client.post(
+            "/api/upload/planning",
+            files={"file": ("p.xlsx", make_xlsx(header, rows), XLSX_MIME)},
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["row_count"], 1)
+
+    def test_upload_alias_column_names_ok(self):
+        # Колонки могут называться иначе: «Код точки» = «Единый код», «Метро» = «Станция метро».
+        header = ["Код точки", "Населенный пункт", "Название улицы", "Цикличность", "Код СВ", "Метро"]
+        rows = [["A001", "Москва", "Ленина", 1, "SUP1", "Тверская"]]
+        r = self.client.post(
+            "/api/upload/planning",
+            files={"file": ("p.xlsx", make_xlsx(header, rows), XLSX_MIME)},
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["row_count"], 1)
+
     def test_upload_wrong_extension(self):
         r = self.client.post(
             "/api/upload/planning",
