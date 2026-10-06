@@ -609,3 +609,16 @@ section.panel { padding: 28px; }
   .car-track { height: 64px; }
   #car { width: 100px; }
 }
+
+/* ── Подвал ─────────────────────────────────────────────── */
+.site-footer {
+  text-align: center;
+  padding: 20px 16px 30px;
+  color: #9ca3af;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+.site-footer .footer-handle {
+  color: #d62828;
+  font-weight: 600;
+}
