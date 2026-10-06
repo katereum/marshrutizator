@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Порт: ${PORT} задаёт хостинг (напр. SnapDeploy/Koyeb), иначе 7860 (Hugging Face Spaces).
-EXPOSE 7860
-CMD uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-7860}
+# Amvera по умолчанию ждёт HTTP на порту 80 (containerPort). $PORT уважает
+# хосты, которые его задают (Render/SnapDeploy); иначе — 80.
+EXPOSE 80
+CMD uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-80}
