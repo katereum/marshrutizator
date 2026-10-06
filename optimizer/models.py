@@ -28,6 +28,8 @@ class Point:
     score: Optional[float] = None       # «Оценка» 0..5; None = не оценено
     result: Optional[float] = None      # «Результат»; произвольные единицы, больше = лучше
     original: dict = field(default_factory=dict)  # исходная строка Excel (для экспорта без искажений)
+    incomplete: bool = False            # нет полного адреса -> «неопределённая точка»
+    row: int = 0                        # номер строки в Excel (для сообщений об ошибках)
 
     @property
     def has_coords(self) -> bool:

@@ -257,6 +257,31 @@ def optimize(req: OptimizeRequest):
     store.update(job_id, status="PARSING")
     points = parse_planning(io.BytesIO(planning))
 
+    # Точки без полного адреса — «неопределённые»: предупреждаем и по
+    # подтверждению не маршрутизируем их (только показываем в выгрузке).
+    incomplete_points = [p for p in points if p.incomplete]
+    if incomplete_points and not req.confirm_address:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "needs_address_confirmation": True,
+                "total_points": len(points),
+                "incomplete_count": len(incomplete_points),
+                "incomplete": [
+                    {"code": p.id, "row": p.row, "address": _human_address(p)}
+                    for p in incomplete_points[:100]
+                ],
+            },
+        )
+
+    points = [p for p in points if not p.incomplete]  # дальше только полные точки
+    if not points:
+        raise OptimizationError(
+            "Все точки без полного адреса — маршрут построить не из чего. "
+            "Заполните город и улицу хотя бы для части точек.",
+            {"incomplete_count": len(incomplete_points)},
+        )
+
     store.update(job_id, status="GEOCODING")
     points = _geocode_points(points)
     home = _geocode_home(req.home_address)
@@ -343,10 +368,12 @@ def optimize(req: OptimizeRequest):
     store.update(job_id, status="EXPORTING")
     points_by_id = {p.id: p for p in points}
     template_io = io.BytesIO(template) if template else None
-    files = [
-        (f"{r.trade_rep_code or 'route'}.xlsx", export_route(template_io, r, points_by_id))
-        for r in results
-    ]
+    files = []
+    for r in results:
+        inc = [p for p in incomplete_points if p.trade_rep_code == r.trade_rep_code]
+        files.append(
+            (f"{r.trade_rep_code or 'route'}.xlsx", export_route(template_io, r, points_by_id, inc))
+        )
     geometries = _build_route_geometries(results, points_by_id, home, home_by_weekday)
     geojson = build_geojson(results, points_by_id, home=home, home_by_weekday=home_by_weekday, geometries=geometries)
 

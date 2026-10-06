@@ -47,15 +47,19 @@ class TestParser(unittest.TestCase):
         self.assertIn("Единый код", points[0].original)
 
     def test_missing_column(self):  # Тест №6
-        header = [c for c in PLANNING_COLUMNS if c != "Цикличность"]
+        # «Название улицы» (адрес) — обязательна в шапке.
+        header = [c for c in PLANNING_COLUMNS if c != "Название улицы"]
         with self.assertRaises(ValidationError) as cm:
             parse_planning(xlsx_with(header, []))
-        self.assertIn("Цикличность", str(cm.exception))
+        self.assertIn("Название улицы", str(cm.exception))
 
-    def test_empty_required_field(self):  # Тест №7
-        # Код и цикличность обязательны; адресные поля — нет.
-        with self.assertRaises(ValidationError):
-            parse_planning(xlsx_with(PLANNING_COLUMNS, [row(**{"Единый код": ""})]))
+    def test_missing_code_generates_id(self):  # Тест №7
+        points = parse_planning(xlsx_with(PLANNING_COLUMNS, [row(**{"Единый код": ""})]))
+        self.assertEqual(points[0].id, "ТОЧКА-2")
+
+    def test_missing_frequency_defaults_to_one(self):
+        points = parse_planning(xlsx_with(PLANNING_COLUMNS, [row(**{"Цикличность": ""})]))
+        self.assertEqual(points[0].frequency, 1)
 
     def test_empty_address_fields_allowed(self):
         # Город/улица могут быть пустыми — точка всё равно парсится.

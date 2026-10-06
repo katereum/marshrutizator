@@ -190,7 +190,33 @@ def _fill_route_rows(ws, col_index: dict, write_row: int, sample_row, result: Ro
             write_row += 1
 
 
-def _export_route_from_scratch(result: RouteResult, points_by_id: dict[str, Point]) -> bytes:
+def _add_incomplete_sheet(wb, incomplete_points) -> None:
+    """Лист «Неопределенные точки»: точки без полного адреса (не маршрутизированы)."""
+    if not incomplete_points:
+        return
+    ws = wb.create_sheet("Неопределенные точки")
+    cols: list[str] = []
+    for p in incomplete_points:
+        if p.original:
+            cols = [str(c).strip() for c in p.original.keys() if str(c).strip()]
+            break
+    header_row = 1
+    for c, name in enumerate(cols, start=1):
+        cell = ws.cell(row=header_row, column=c, value=name)
+        cell.font = Font(bold=True)
+    for i, p in enumerate(incomplete_points):
+        row = header_row + 1 + i
+        orig = p.original or {}
+        for c, name in enumerate(cols, start=1):
+            value = ""
+            for k, v in orig.items():
+                if str(k).strip().lower() == name.lower():
+                    value = "" if v is None else v
+                    break
+            ws.cell(row=row, column=c, value=value)
+
+
+def _export_route_from_scratch(result: RouteResult, points_by_id: dict[str, Point], incomplete_points=None) -> bytes:
     """Создаёт маршрутный лист с нуля: колонки — из базы планирования, а не фиксированные."""
     wb = Workbook()
     ws = wb.active
@@ -204,15 +230,16 @@ def _export_route_from_scratch(result: RouteResult, points_by_id: dict[str, Poin
         col_index[name] = c
     _fill_route_rows(ws, col_index, header_row + 1, None, result, points_by_id)
     _add_summary_sheet(wb, result, points_by_id)
+    _add_incomplete_sheet(wb, incomplete_points)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
 
 
-def export_route(template: BinaryIO | None, result: RouteResult, points_by_id: dict[str, Point]) -> bytes:
+def export_route(template: BinaryIO | None, result: RouteResult, points_by_id: dict[str, Point], incomplete_points=None) -> bytes:
     """Заполняет шаблон (или создаёт лист с нуля) и возвращает .xlsx в виде bytes."""
     if template is None:
-        return _export_route_from_scratch(result, points_by_id)
+        return _export_route_from_scratch(result, points_by_id, incomplete_points)
 
     wb = load_workbook(template)
     ws = wb.active
@@ -239,6 +266,7 @@ def export_route(template: BinaryIO | None, result: RouteResult, points_by_id: d
     _fill_route_rows(ws, col_index, write_row, sample_row if has_sample else None, result, points_by_id)
 
     _add_summary_sheet(wb, result, points_by_id)
+    _add_incomplete_sheet(wb, incomplete_points)
 
     out = io.BytesIO()
     wb.save(out)

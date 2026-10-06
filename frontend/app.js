@@ -337,7 +337,7 @@ function runStageSequence() {
   return () => clearInterval(timer);
 }
 
-function buildOptimizeBody(confirm) {
+function buildOptimizeBody(confirm, confirmAddress) {
   const period = currentPeriod();
   return JSON.stringify({
     planning_file_id: state.planningFileId,
@@ -348,14 +348,15 @@ function buildOptimizeBody(confirm) {
     focus: el("focus").value,
     ...buildCapacity(),
     confirm,
+    confirm_address: confirmAddress,
   });
 }
 
-async function runOptimize(confirm) {
+async function runOptimize(confirm, confirmAddress) {
   const resp = await fetch("/api/optimize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: buildOptimizeBody(confirm),
+    body: buildOptimizeBody(confirm, confirmAddress),
   });
   if (!resp.ok) throw new Error(await readErrorMessage(resp));
   return await resp.json();
@@ -385,12 +386,48 @@ function confirmCapacity(data) {
   });
 }
 
+// Спрашивает подтверждение, когда у части точек нет полного адреса.
+function confirmAddress(data) {
+  return new Promise((resolve) => {
+    const modal = el("confirm-modal");
+    const text = el("confirm-text");
+    const okBtn = el("confirm-ok");
+    const cancelBtn = el("confirm-cancel");
+    const rows = (data.incomplete || []).slice(0, 10).map((p) => p.row).join(", ");
+    const more = data.incomplete_count > 10 ? ` и ещё ${data.incomplete_count - 10}` : "";
+    text.textContent =
+      `У ${data.incomplete_count} из ${data.total_points} точек нет полного адреса (строки: ${rows}${more}). ` +
+      `Они попадут в лист «Неопределенные точки» и не войдут в маршрут. Продолжить?`;
+    modal.classList.remove("hidden");
+    const cleanup = () => {
+      modal.classList.add("hidden");
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+    };
+    okBtn.onclick = () => { cleanup(); resolve(true); };
+    cancelBtn.onclick = () => { cleanup(); resolve(false); };
+  });
+}
+
 optimizeBtn.addEventListener("click", async () => {
   resultBox.classList.add("hidden");
   mapSection.classList.add("hidden");
   const stopStages = runStageSequence();
   try {
-    let data = await runOptimize(false);
+    let confirmFlag = false;
+    let confirmAddressFlag = false;
+    let data = await runOptimize(confirmFlag, confirmAddressFlag);
+    if (data.needs_address_confirmation) {
+      const ok = await confirmAddress(data);
+      if (!ok) {
+        stopStages();
+        setCarProgress(0);
+        setStage("");
+        return;
+      }
+      confirmAddressFlag = true;
+      data = await runOptimize(confirmFlag, confirmAddressFlag);
+    }
     if (data.needs_confirmation) {
       const ok = await confirmCapacity(data);
       if (!ok) {
@@ -399,7 +436,8 @@ optimizeBtn.addEventListener("click", async () => {
         setStage("");
         return;
       }
-      data = await runOptimize(true);
+      confirmFlag = true;
+      data = await runOptimize(confirmFlag, confirmAddressFlag);
     }
     const job_id = data.job_id;
     state.jobId = job_id;

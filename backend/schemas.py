@@ -24,6 +24,10 @@ class OptimizeRequest(BaseModel):
     # Подтверждение после предупреждения о расхождении лимитов с реальным
     # числом визитов (см. /api/optimize → needs_confirmation).
     confirm: bool = False
+    # Подтверждение после предупреждения о точках без полного адреса
+    # (см. /api/optimize → needs_address_confirmation). При true такие точки
+    # идут в «неопределённые» и не маршрутизируются.
+    confirm_address: bool = False
     # Мягкие целевые ограничения (R3); ядро MVP балансирует к вычисленной цели.
     min_points_per_day: int | None = None
     max_points_per_day: int | None = None

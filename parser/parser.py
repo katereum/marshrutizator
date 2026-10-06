@@ -9,7 +9,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from optimizer.models import Point
 from optimizer.normalizer import canonical_address, normalize_street
 
-from .columns import REQUIRED_NON_EMPTY_COLUMNS, resolve_column
+from .columns import resolve_column
 from .errors import ValidationError
 from .validator import validate_planning_header
 
@@ -105,31 +105,39 @@ def parse_planning(fileobj) -> list[Point]:
             else:
                 original[key] = "" if val is None else val
 
-        for col in REQUIRED_NON_EMPTY_COLUMNS:
-            if str(resolve_column(raw, col)).strip() == "":
-                raise ValidationError(f"Пустое обязательное поле «{col}» в строке {row_num}")
-
+        # Единый код не обязателен — генерируем уникальный, если пусто.
         code = str(resolve_column(raw, "Единый код")).strip()
+        if not code:
+            code = f"ТОЧКА-{row_num}"
         if code in seen_codes:
             raise ValidationError(f"Дублирующийся Единый код: {code}")
         seen_codes.add(code)
 
-        try:
-            frequency = int(float(str(resolve_column(raw, "Цикличность")).strip()))
-        except ValueError:
-            raise ValidationError(
-                f"Некорректная цикличность в строке {row_num}: «{resolve_column(raw, 'Цикличность')}»"
-            )
+        # Цикличность не обязательна — по умолчанию 1.
+        freq_str = str(resolve_column(raw, "Цикличность")).strip()
+        if freq_str == "":
+            frequency = 1
+        else:
+            try:
+                frequency = int(float(freq_str))
+            except ValueError:
+                raise ValidationError(
+                    f"Некорректная цикличность в строке {row_num}: «{freq_str}»"
+                )
         if frequency < 1:
             raise ValidationError(f"Цикличность должна быть >= 1 (строка {row_num})")
 
         locality = str(resolve_column(raw, "Населенный пункт")).strip()
         metro = str(resolve_column(raw, "Станция метро")).strip()
         house = str(resolve_column(raw, "Номер дома")).strip()
+        street_name = str(resolve_column(raw, "Название улицы")).strip()
         street = normalize_street(
-            f"{resolve_column(raw, 'Тип улицы')} {resolve_column(raw, 'Название улицы')}".strip()
+            f"{resolve_column(raw, 'Тип улицы')} {street_name}".strip()
         )
         address = canonical_address(locality, metro, street, house)
+
+        # Нет полного адреса (город или улица пусты) -> «неопределённая точка».
+        incomplete = locality == "" or street_name == ""
 
         points.append(
             Point(
@@ -144,6 +152,8 @@ def parse_planning(fileobj) -> list[Point]:
                 score=_optional_float(_lookup_ci(raw, "Оценка")),
                 result=_optional_float(_lookup_ci(raw, "Результат")),
                 original=original,
+                incomplete=incomplete,
+                row=row_num,
             )
         )
 

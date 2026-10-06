@@ -175,10 +175,49 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(r.status_code, 202)
         self.assertIn("job_id", r.json())
 
+    def test_optimize_address_confirmation_flow(self):
+        # Одна точка с полным адресом, одна — без города («неопределённая»).
+        planning = make_xlsx(
+            PLANNING_COLUMNS,
+            [
+                planning_row("A001", 1),
+                ["A002", "1", "Актив", "", "ул.", "Ленина", "2", "", "", "", "", "П", "С", "К", "SUP", "TP1", 1],
+            ],
+        )
+        r = self.client.post("/api/upload/planning", files={"file": ("planning.xlsx", planning, XLSX_MIME)})
+        pid = r.json()["file_id"]
+
+        body = {
+            "planning_file_id": pid,
+            "period_start": "2026-09-01",
+            "period_end": "2026-09-30",
+        }
+        with patch("backend.app.geocoder") as mock_geo:
+            mock_geo.geocode.return_value = (55.75, 37.61)
+            r = self.client.post("/api/optimize", json=body)
+
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertTrue(data["needs_address_confirmation"])
+        self.assertEqual(data["incomplete_count"], 1)
+
+        # Подтверждаем — маршрут по полной точке, неполная уходит в отдельный лист.
+        body["confirm_address"] = True
+        with patch("backend.app.geocoder") as mock_geo:
+            mock_geo.geocode.return_value = (55.75, 37.61)
+            r = self.client.post("/api/optimize", json=body)
+
+        self.assertEqual(r.status_code, 202)
+        jid = r.json()["job_id"]
+        r = self.client.get(f"/api/download/{jid}")
+        self.assertEqual(r.status_code, 200)
+        wb = load_workbook(io.BytesIO(r.content))
+        self.assertIn("Неопределенные точки", wb.sheetnames)
+
     def test_upload_missing_column_returns_error(self):
-        header = [c for c in PLANNING_COLUMNS if c != "Цикличность"]
-        rows = [["A001", "1", "Актив", "Москва", "ул.", "Ленина", "1", "", "", "Тверская",
-                 "", "П", "С", "К", "SUP", "TP1"]]
+        # «Название улицы» (адрес) — обязательна в шапке.
+        header = ["Единый код", "Населенный пункт", "Цикличность"]
+        rows = [["A001", "Москва", 1]]
         r = self.client.post(
             "/api/upload/planning",
             files={"file": ("p.xlsx", make_xlsx(header, rows), XLSX_MIME)},
