@@ -209,16 +209,17 @@ def _build_route_geometries(
                 if point is not None and point.has_coords:
                     visit_coords.append((point.latitude, point.longitude))
 
-            h = home
+            h_start = home
             if home_by_weekday is not None:
-                h = home_by_weekday.get(day.weekday, home)
+                h_start = home_by_weekday.get(day.weekday, home)
+            h_end = home  # возврат — всегда в базовый дом
 
             coords = []
-            if h is not None:
-                coords.append(h)
+            if h_start is not None:
+                coords.append(h_start)
             coords.extend(visit_coords)
-            if h is not None:
-                coords.append(h)
+            if h_end is not None:
+                coords.append(h_end)
             if len(coords) < 2:
                 continue
 
@@ -249,9 +250,9 @@ def optimize(req: OptimizeRequest):
     job_id = store.create_job()
 
     planning = store.get_file(req.planning_file_id)
-    template = store.get_file(req.route_template_file_id)
-    if planning is None or template is None:
-        raise FileError("Файл не найден. Загрузите файлы заново")
+    template = store.get_file(req.route_template_file_id) if req.route_template_file_id else None
+    if planning is None:
+        raise FileError("Файл не найден. Загрузите базу планирования заново")
 
     store.update(job_id, status="PARSING")
     points = parse_planning(io.BytesIO(planning))
@@ -341,8 +342,9 @@ def optimize(req: OptimizeRequest):
 
     store.update(job_id, status="EXPORTING")
     points_by_id = {p.id: p for p in points}
+    template_io = io.BytesIO(template) if template else None
     files = [
-        (f"{r.trade_rep_code or 'route'}.xlsx", export_route(io.BytesIO(template), r, points_by_id))
+        (f"{r.trade_rep_code or 'route'}.xlsx", export_route(template_io, r, points_by_id))
         for r in results
     ]
     geometries = _build_route_geometries(results, points_by_id, home, home_by_weekday)

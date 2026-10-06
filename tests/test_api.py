@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from backend.app import _build_road_matrix, app, store
 from optimizer.models import Point
@@ -185,6 +185,42 @@ class TestAPI(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["error"]["code"], "VALIDATION_ERROR")
+
+    def test_optimize_without_template(self):
+        # Без маршрутного листа-шаблона — только база планирования.
+        planning = make_xlsx(
+            PLANNING_COLUMNS,
+            [planning_row("A001", 1), planning_row("A002", 1)],
+        )
+        r = self.client.post("/api/upload/planning", files={"file": ("planning.xlsx", planning, XLSX_MIME)})
+        self.assertEqual(r.status_code, 200)
+        pid = r.json()["file_id"]
+
+        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road, patch("backend.app.route_geometry") as mock_route_geo:
+            mock_geo.geocode.return_value = (55.75, 37.61)
+            mock_road.matrix.return_value = [[0.0, 1.0], [1.0, 0.0]]
+            mock_route_geo.route.return_value = None
+            r = self.client.post(
+                "/api/optimize",
+                json={
+                    "planning_file_id": pid,
+                    "period_start": "2026-09-01",
+                    "period_end": "2026-09-30",
+                },
+            )
+
+        self.assertEqual(r.status_code, 202)
+        jid = r.json()["job_id"]
+
+        r = self.client.get(f"/api/download/{jid}")
+        self.assertEqual(r.status_code, 200)
+        wb = load_workbook(io.BytesIO(r.content))
+        ws = wb.active
+        header = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+        self.assertIn("Дата визита", header)
+        self.assertIn("Единый код", header)
+        self.assertIn("Оценка", header)
+        self.assertIn("Приоритет", header)
 
     def test_upload_wrong_extension(self):
         r = self.client.post(

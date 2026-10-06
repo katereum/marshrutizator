@@ -10,15 +10,12 @@ const STAGES = [
 
 const state = {
   planningFile: null,
-  templateFile: null,
   planningFileId: null,
-  templateFileId: null,
   jobId: null,
 };
 
 const el = (id) => document.getElementById(id);
 const planningInput = el("planning-file");
-const templateInput = el("template-file");
 const optimizeBtn = el("optimize-btn");
 const statusBox = el("status");
 const stageEl = el("stage");
@@ -46,9 +43,9 @@ function setStage(text) {
 }
 
 function refreshButton() {
-  const ready = state.planningFileId && state.templateFileId;
+  const ready = !!state.planningFileId;
   optimizeBtn.disabled = !ready;
-  el("hint").textContent = ready ? "Всё готово, можно упорядочивать." : "Загрузите оба файла, чтобы начать.";
+  el("hint").textContent = ready ? "Всё готово, можно упорядочивать." : "Загрузите базу планирования, чтобы начать.";
 }
 
 // Читает сообщение об ошибке из ответа, даже если это не JSON (текстовая 500).
@@ -81,19 +78,6 @@ planningInput.addEventListener("change", async () => {
     state.planningFileId = await uploadFile(file, "/api/upload/planning");
     el("planning-label").textContent = file.name;
     el("planning-label").parentElement.classList.add("filled");
-    refreshButton();
-  } catch (err) {
-    setStatus(err.message, true);
-  }
-});
-
-templateInput.addEventListener("change", async () => {
-  const file = templateInput.files[0];
-  if (!file) return;
-  try {
-    state.templateFileId = await uploadFile(file, "/api/upload/route-template");
-    el("template-label").textContent = file.name;
-    el("template-label").parentElement.classList.add("filled");
     refreshButton();
   } catch (err) {
     setStatus(err.message, true);
@@ -357,7 +341,6 @@ function buildOptimizeBody(confirm) {
   const period = currentPeriod();
   return JSON.stringify({
     planning_file_id: state.planningFileId,
-    route_template_file_id: state.templateFileId,
     period_start: period.start,
     period_end: period.end,
     home_address: el("home-address").value.trim() || null,

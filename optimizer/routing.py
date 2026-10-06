@@ -16,20 +16,24 @@ def order_day(
     home: tuple[float, float] | None = None,
     dist=None,
     home_dist=None,
+    end_home_dist=None,
     priority: dict[str, float] | None = None,
     priority_weight: float = 0.0,
 ) -> list[str]:
     """Возвращает visit_ids в порядке посещения.
 
     `dist` и `home_dist` позволяют подменить прямую (haversine) метрику на
-    дорожную. `priority` (point_id -> 0..1) и `priority_weight` (в «км»)
-    мягко вытаскивают приоритетные точки раньше: жадный сосед выбирает
-    `dist - priority_weight * priority`, а 2-opt остаётся чисто дорожным.
+    дорожную. `home_dist` — расстояние от дома СТАРТА дня до точки, а
+    `end_home_dist` — от точки до дома ВОЗВРАТА (если None — дом тот же, что
+    стартовый, т.е. круг дом→точки→дом). `priority` (point_id -> 0..1) и
+    `priority_weight` (в «км») мягко вытаскивают приоритетные точки раньше:
+    жадный сосед выбирает `dist - priority_weight * priority`, а 2-opt остаётся
+    чисто дорожным.
     """
     if len(visit_ids) <= 2:
         return list(visit_ids)
     if all(points_by_visit[v].has_coords for v in visit_ids):
-        return _nn_2opt(visit_ids, points_by_visit, home, dist, home_dist, priority, priority_weight)
+        return _nn_2opt(visit_ids, points_by_visit, home, dist, home_dist, end_home_dist, priority, priority_weight)
     return sorted(
         visit_ids,
         key=lambda v: (points_by_visit[v].normalized_address, v),
@@ -46,6 +50,7 @@ def _nn_2opt(
     home: tuple[float, float] | None = None,
     dist=None,
     home_dist=None,
+    end_home_dist=None,
     priority: dict[str, float] | None = None,
     priority_weight: float = 0.0,
 ) -> list[str]:
@@ -89,11 +94,11 @@ def _nn_2opt(
         cur = nxt
 
     # 2. Локальная оптимизация 2-opt (чисто по дорогам — приоритет не «размазывает»).
-    order = _two_opt(order, dist, home_dist)
+    order = _two_opt(order, dist, home_dist, end_home_dist)
     return order
 
 
-def _two_opt(order: list[str], dist, home_dist=None) -> list[str]:
+def _two_opt(order: list[str], dist, home_dist=None, end_home_dist=None) -> list[str]:
     n = len(order)
     if n < 3:
         return order
@@ -101,19 +106,23 @@ def _two_opt(order: list[str], dist, home_dist=None) -> list[str]:
     def leg(i: int, j: int) -> float:
         """Стоимость перехода между позициями i и j.
 
-        `-1` — виртуальный дом перед маршрутом, `n` — дом после маршрута.
+        `-1` — виртуальный дом перед маршрутом (старт дня), `n` — дом после
+        маршрута (конец дня). Старт считается от дома дня (`home_dist`), конец —
+        от дома возврата (`end_home_dist`, если задан; иначе тот же дом).
         """
-        if home_dist is None:
-            if i < 0 or j >= n:
-                return 0.0
-            return dist(order[i], order[j])
         a = order[i] if 0 <= i < n else None
         b = order[j] if 0 <= j < n else None
         if a is not None and b is not None:
             return dist(a, b)
         if a is None and b is None:
             return 0.0
-        return home_dist(a if a is not None else b)
+        if a is None:
+            # виртуальный дом ПЕРЕД маршрутом — старт дня
+            return home_dist(b) if home_dist is not None else 0.0
+        # b is None: виртуальный дом ПОСЛЕ маршрута — конец дня
+        if end_home_dist is not None:
+            return end_home_dist(a)
+        return home_dist(a) if home_dist is not None else 0.0
 
     improved = True
     passes = 0

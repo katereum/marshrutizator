@@ -227,5 +227,34 @@ class TestExporter(unittest.TestCase):
         self.assertGreaterEqual(days_seen, 2)  # два дня с визитами
 
 
+    def test_export_without_template_generates_standard_sheet(self):
+        # Без шаблона — маршрутный лист создаётся с нуля: стандартные колонки + Оценка/Результат/Приоритет.
+        points = [
+            Point(
+                id="A001", trade_rep_code="TP1", frequency=1, locality="Москва",
+                street="ул ленина", house="1", score=3.0, result=77.5,
+                original={
+                    "Единый код": "A001",
+                    "Код торгового представителя": "TP1",
+                    "Оценка": 3,
+                    "Результат": "77.5%",
+                },
+            )
+        ]
+        result = build_route(points, date(2026, 9, 1), date(2026, 9, 30))
+        data = export_route(None, result, {p.id: p for p in points})
+
+        wb = load_workbook(io.BytesIO(data))
+        ws = wb.active
+        header = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+        self.assertEqual(header[: len(RESULT_COLUMNS)], RESULT_COLUMNS)
+        self.assertIn("Оценка", header)
+        self.assertIn("Результат", header)
+        self.assertIn("Приоритет", header)
+        self.assertEqual(ws.cell(row=2, column=4).value, "A001")  # «Единый код»
+        self.assertEqual(ws.cell(row=2, column=2).number_format, "DD.MM.YYYY")
+        self.assertIn("Сводка", wb.sheetnames)
+
+
 if __name__ == "__main__":
     unittest.main()

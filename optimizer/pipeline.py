@@ -53,11 +53,12 @@ def _node_distance(
     return distance
 
 
-def _total_km(schedules: list[DaySchedule], node_distance, day_home_dist) -> float:
-    """Суммарный километраж всех дней (дом -> точки -> дом).
+def _total_km(schedules: list[DaySchedule], node_distance, day_home_dist, end_home_dist=None) -> float:
+    """Суммарный километраж всех дней (дом старта -> точки -> дом возврата).
 
-    `day_home_dist(day_idx, point_id) -> км` — расстояние от дома соответствующего
-    дня до точки (0, если дома для дня нет).
+    `day_home_dist(day_idx, point_id) -> км` — расстояние от дома старта дня до
+    точки (0, если дома для дня нет). `end_home_dist(point_id) -> км` — от точки
+    до дома возврата (если None — возврат в тот же дом, что и старт).
     """
     total = 0.0
     for idx, day in enumerate(schedules):
@@ -65,7 +66,10 @@ def _total_km(schedules: list[DaySchedule], node_distance, day_home_dist) -> flo
         if not ids:
             continue
         total += day_home_dist(idx, _pid(ids[0]))
-        total += day_home_dist(idx, _pid(ids[-1]))
+        if end_home_dist is not None:
+            total += end_home_dist(_pid(ids[-1]))
+        else:
+            total += day_home_dist(idx, _pid(ids[-1]))
         for a, b in zip(ids, ids[1:]):
             total += node_distance(_pid(a), _pid(b))
     return total
@@ -131,6 +135,12 @@ def build_route(
             return 0.0
         return haversine_km(h[0], h[1], p.latitude, p.longitude)
 
+    def base_home_dist(pid: str) -> float:
+        """Расстояние от точки до БАЗОВОГО дома (возврат всегда туда)."""
+        if home is None:
+            return 0.0
+        return node_distance(HOME_ID, pid)
+
     # Мягкий приоритет: вес λ = половина типичного расстояния между соседними точками,
     # чтобы приоритет переставлял точки внутри района, не ломая географию.
     priority = build_priority(points, focus)
@@ -141,8 +151,10 @@ def build_route(
     for d in range(n_days):
         h = day_home(d)
         home_dist = (lambda v, d=d: day_home_dist(d, _pid(v))) if h is not None else None
+        end_home_dist = (lambda v: base_home_dist(_pid(v))) if home is not None else None
         ordered = order_day(
             day_visits[d], points_by_visit, h, visit_dist, home_dist,
+            end_home_dist=end_home_dist,
             priority=priority, priority_weight=priority_weight,
         )
         schedules.append(
@@ -167,7 +179,7 @@ def build_route(
         total_visits=len(visits),
         per_day_load=load,
         violations=violations,
-        total_km=_total_km(schedules, node_distance, day_home_dist),
+        total_km=_total_km(schedules, node_distance, day_home_dist, base_home_dist),
     )
     result.stats.score = route_score(result, points, cluster)
     return result

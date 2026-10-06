@@ -72,11 +72,15 @@ def build_geojson(
                     point = points_by_id.get(vid.rsplit("#", 1)[0])
                     if point is not None and point.has_coords:
                         coords.append([point.longitude, point.latitude])
-                h = home
+                h_start = home
                 if home_by_weekday is not None:
-                    h = home_by_weekday.get(day.weekday, home)
-                if h is not None and coords:
-                    coords = [[h[1], h[0]]] + coords + [[h[1], h[0]]]
+                    h_start = home_by_weekday.get(day.weekday, home)
+                h_end = home  # возврат — всегда в базовый дом
+                if coords:
+                    if h_start is not None:
+                        coords = [[h_start[1], h_start[0]]] + coords
+                    if h_end is not None:
+                        coords = coords + [[h_end[1], h_end[0]]]
                 line = coords
             if line is not None and len(line) >= 2:
                 features.append(

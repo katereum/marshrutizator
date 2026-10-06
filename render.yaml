@@ -1,0 +1,19 @@
+# Render blueprint: разворачивает Маршрутизатор как бесплатный web-сервис.
+# Деплой: render.com → New → Blueprint → выбрать этот репозиторий.
+# Секреты (ключи) задаются в момент создания сервиса и НЕ коммитятся в репо.
+services:
+  - type: web
+    name: marshrutizator
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: YANDEX_GEOCODER_API_KEY
+        sync: false
+        description: Ключ Яндекс.Геокодера (обязателен — без него точки не геокодируются)
+      - key: YANDEX_ROUTING_API_KEY
+        sync: false
+        description: Ключ Яндекс.Маршрутизации (опционально; без него — прямые расстояния)
+      - key: OSRM_BASE_URL
+        sync: false
+        description: Self-hosted OSRM (опционально)

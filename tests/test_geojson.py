@@ -102,5 +102,19 @@ class TestGeojson(unittest.TestCase):
         self.assertEqual(by_wd[2][0], [37.61, 55.75])  # базовый дом среды
 
 
+    def test_home_by_weekday_returns_to_base_home(self):
+        # Оверрайд меняет только СТАРТ; возврат всегда в базовый «Домашний адрес».
+        points = {
+            "a": Point(id="a", trade_rep_code="T", frequency=1, latitude=55.7, longitude=37.6),
+        }
+        result = make_result([
+            DaySchedule(date=date(2026, 9, 1), weekday=1, ordered_visits=["a#0"]),  # Вт с оверрайдом
+        ])
+        gj = build_geojson([result], points, home=(55.75, 37.61), home_by_weekday={1: (55.9, 37.9)})
+        coords = line_features(gj)[0]["geometry"]["coordinates"]
+        self.assertEqual(coords[0], [37.9, 55.9])      # старт — адрес вторника
+        self.assertEqual(coords[-1], [37.61, 55.75])   # возврат — базовый дом
+
+
 if __name__ == "__main__":
     unittest.main()

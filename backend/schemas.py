@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 class OptimizeRequest(BaseModel):
     planning_file_id: str
-    route_template_file_id: str
+    route_template_file_id: str | None = None
     period_start: date
     period_end: date
     work_on_weekends: bool = False
