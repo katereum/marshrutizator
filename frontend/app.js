@@ -337,7 +337,7 @@ function runStageSequence() {
   return () => clearInterval(timer);
 }
 
-function buildOptimizeBody(confirm, confirmAddress) {
+function buildOptimizeBody(confirm, confirmAddress, confirmDuplicates) {
   const period = currentPeriod();
   return JSON.stringify({
     planning_file_id: state.planningFileId,
@@ -349,14 +349,15 @@ function buildOptimizeBody(confirm, confirmAddress) {
     ...buildCapacity(),
     confirm,
     confirm_address: confirmAddress,
+    confirm_duplicates: confirmDuplicates,
   });
 }
 
-async function runOptimize(confirm, confirmAddress) {
+async function runOptimize(confirm, confirmAddress, confirmDuplicates) {
   const resp = await fetch("/api/optimize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: buildOptimizeBody(confirm, confirmAddress),
+    body: buildOptimizeBody(confirm, confirmAddress, confirmDuplicates),
   });
   if (!resp.ok) throw new Error(await readErrorMessage(resp));
   return await resp.json();
@@ -375,6 +376,29 @@ function confirmCapacity(data) {
     } else {
       text.textContent = `В базе ${data.total_visits} визитов, а по лимитам нужно ${data.target_capacity} — не хватает ${-diff}. Предлагаю распределить равномерно (~${data.avg_per_day} в день). Продолжить?`;
     }
+    modal.classList.remove("hidden");
+    const cleanup = () => {
+      modal.classList.add("hidden");
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+    };
+    okBtn.onclick = () => { cleanup(); resolve(true); };
+    cancelBtn.onclick = () => { cleanup(); resolve(false); };
+  });
+}
+
+// Спрашивает подтверждение, когда есть дубли кода (точка учтётся один раз).
+function confirmDuplicates(data) {
+  return new Promise((resolve) => {
+    const modal = el("confirm-modal");
+    const text = el("confirm-text");
+    const okBtn = el("confirm-ok");
+    const cancelBtn = el("confirm-cancel");
+    const rows = (data.duplicates || []).slice(0, 10).map((d) => `${d.code} (строка ${d.row})`).join(", ");
+    const more = data.duplicate_count > 10 ? ` и ещё ${data.duplicate_count - 10}` : "";
+    text.textContent =
+      `Найдено ${data.duplicate_count} дублей кода (${rows}${more}). ` +
+      `Каждая точка будет учтена один раз. Продолжить?`;
     modal.classList.remove("hidden");
     const cleanup = () => {
       modal.classList.add("hidden");
@@ -416,7 +440,19 @@ optimizeBtn.addEventListener("click", async () => {
   try {
     let confirmFlag = false;
     let confirmAddressFlag = false;
-    let data = await runOptimize(confirmFlag, confirmAddressFlag);
+    let confirmDuplicatesFlag = false;
+    let data = await runOptimize(confirmFlag, confirmAddressFlag, confirmDuplicatesFlag);
+    if (data.needs_duplicate_confirmation) {
+      const ok = await confirmDuplicates(data);
+      if (!ok) {
+        stopStages();
+        setCarProgress(0);
+        setStage("");
+        return;
+      }
+      confirmDuplicatesFlag = true;
+      data = await runOptimize(confirmFlag, confirmAddressFlag, confirmDuplicatesFlag);
+    }
     if (data.needs_address_confirmation) {
       const ok = await confirmAddress(data);
       if (!ok) {
@@ -426,7 +462,7 @@ optimizeBtn.addEventListener("click", async () => {
         return;
       }
       confirmAddressFlag = true;
-      data = await runOptimize(confirmFlag, confirmAddressFlag);
+      data = await runOptimize(confirmFlag, confirmAddressFlag, confirmDuplicatesFlag);
     }
     if (data.needs_confirmation) {
       const ok = await confirmCapacity(data);
@@ -437,7 +473,7 @@ optimizeBtn.addEventListener("click", async () => {
         return;
       }
       confirmFlag = true;
-      data = await runOptimize(confirmFlag, confirmAddressFlag);
+      data = await runOptimize(confirmFlag, confirmAddressFlag, confirmDuplicatesFlag);
     }
     const job_id = data.job_id;
     state.jobId = job_id;

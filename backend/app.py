@@ -35,6 +35,7 @@ from parser import (
     OptimizationError,
     ValidationError,
     parse_planning,
+    parse_planning_with_duplicates,
     read_template_header,
     require_extension,
     validate_template_header,
@@ -255,7 +256,18 @@ def optimize(req: OptimizeRequest):
         raise FileError("Файл не найден. Загрузите базу планирования заново")
 
     store.update(job_id, status="PARSING")
-    points = parse_planning(io.BytesIO(planning))
+    points, duplicates = parse_planning_with_duplicates(io.BytesIO(planning))
+
+    # Дубли кода: предупреждаем и по подтверждению считаем каждую точку один раз.
+    if duplicates and not req.confirm_duplicates:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "needs_duplicate_confirmation": True,
+                "duplicate_count": len(duplicates),
+                "duplicates": duplicates[:50],
+            },
+        )
 
     # Точки без полного адреса — «неопределённые»: предупреждаем и по
     # подтверждению не маршрутизируем их (только показываем в выгрузке).

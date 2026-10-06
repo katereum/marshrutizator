@@ -214,6 +214,29 @@ class TestAPI(unittest.TestCase):
         wb = load_workbook(io.BytesIO(r.content))
         self.assertIn("Неопределенные точки", wb.sheetnames)
 
+    def test_optimize_duplicate_confirmation_flow(self):
+        # Две строки с одним кодом — предупреждаем, по подтверждению считаем один раз.
+        planning = make_xlsx(PLANNING_COLUMNS, [planning_row("A001", 1), planning_row("A001", 1)])
+        r = self.client.post("/api/upload/planning", files={"file": ("planning.xlsx", planning, XLSX_MIME)})
+        pid = r.json()["file_id"]
+
+        body = {
+            "planning_file_id": pid,
+            "period_start": "2026-09-01",
+            "period_end": "2026-09-30",
+        }
+        r = self.client.post("/api/optimize", json=body)
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertTrue(data["needs_duplicate_confirmation"])
+        self.assertEqual(data["duplicate_count"], 1)
+
+        body["confirm_duplicates"] = True
+        with patch("backend.app.geocoder") as mock_geo:
+            mock_geo.geocode.return_value = (55.75, 37.61)
+            r = self.client.post("/api/optimize", json=body)
+        self.assertEqual(r.status_code, 202)
+
     def test_upload_missing_column_returns_error(self):
         # «Название улицы» (адрес) — обязательна в шапке.
         header = ["Единый код", "Населенный пункт", "Цикличность"]

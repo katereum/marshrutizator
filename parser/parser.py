@@ -56,6 +56,12 @@ def _lookup_ci(raw: dict, name: str):
     return None
 
 
+def _is_placeholder(code: str) -> bool:
+    """Заглушки вместо кода («-», «нет» и т.п.) — считаем, что кода нет."""
+    t = code.strip().lower()
+    return t in ("", "-", "—", "–", "нет", "н/д", "н.д.", "не указано", "нет кода")
+
+
 def _read_header_and_rows(fileobj):
     try:
         wb = load_workbook(fileobj, read_only=True, data_only=True)
@@ -76,9 +82,16 @@ def _read_header_and_rows(fileobj):
 
 
 def parse_planning(fileobj) -> list[Point]:
-    """Парсит базу планирования. Первая строка — заголовок.
+    """Парсит базу планирования и возвращает точки (дубли кода — один раз)."""
+    points, _ = parse_planning_with_duplicates(fileobj)
+    return points
 
-    Поднимает ValidationError с понятным сообщением при структурных ошибках.
+
+def parse_planning_with_duplicates(fileobj) -> tuple[list[Point], list[dict]]:
+    """Парсит базу; возвращает (точки, дубли кода [{code, row}, ...]).
+
+    Дублирующийся код учитывается один раз (первая строка), остальные пропускаются
+    и попадают в список дублей. Поднимает ValidationError при структурных ошибках.
     """
     header, rows = _read_header_and_rows(fileobj)
     if header is None:
@@ -88,6 +101,7 @@ def parse_planning(fileobj) -> list[Point]:
 
     points: list[Point] = []
     seen_codes: set[str] = set()
+    duplicates: list[dict] = []
 
     for row_num, cells in enumerate(rows, start=2):
         if cells is None or all(c.value is None or str(c.value).strip() == "" for c in cells):
@@ -105,12 +119,14 @@ def parse_planning(fileobj) -> list[Point]:
             else:
                 original[key] = "" if val is None else val
 
-        # Единый код не обязателен — генерируем уникальный, если пусто.
+        # Единый код не обязателен. Заглушки («-», «нет» и т.п.) и пусто —
+        # генерируем уникальный код. Дубль настоящего кода — считаем один раз.
         code = str(resolve_column(raw, "Единый код")).strip()
-        if not code:
+        if _is_placeholder(code):
             code = f"ТОЧКА-{row_num}"
         if code in seen_codes:
-            raise ValidationError(f"Дублирующийся Единый код: {code}")
+            duplicates.append({"code": code, "row": row_num})
+            continue
         seen_codes.add(code)
 
         # Цикличность не обязательна — по умолчанию 1.
@@ -159,7 +175,7 @@ def parse_planning(fileobj) -> list[Point]:
 
     if not points:
         raise ValidationError("База не содержит точек")
-    return points
+    return points, duplicates
 
 
 def read_template_header(fileobj) -> list[str]:

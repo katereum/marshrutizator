@@ -1,6 +1,6 @@
 """Парсер и валидатор Excel-файлов (Этап 6)."""
 from .errors import FileError, MarshrutizatorError, OptimizationError, ValidationError
-from .parser import parse_planning, read_template_header
+from .parser import parse_planning, parse_planning_with_duplicates, read_template_header
 from .validator import (
     missing_columns,
     require_extension,
@@ -14,6 +14,7 @@ __all__ = [
     "OptimizationError",
     "ValidationError",
     "parse_planning",
+    "parse_planning_with_duplicates",
     "read_template_header",
     "missing_columns",
     "require_extension",

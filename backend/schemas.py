@@ -28,6 +28,9 @@ class OptimizeRequest(BaseModel):
     # (см. /api/optimize → needs_address_confirmation). При true такие точки
     # идут в «неопределённые» и не маршрутизируются.
     confirm_address: bool = False
+    # Подтверждение после предупреждения о дублях кода (см.
+    # /api/optimize → needs_duplicate_confirmation). Дубли уже учтены один раз.
+    confirm_duplicates: bool = False
     # Мягкие целевые ограничения (R3); ядро MVP балансирует к вычисленной цели.
     min_points_per_day: int | None = None
     max_points_per_day: int | None = None

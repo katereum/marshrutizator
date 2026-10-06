@@ -3,7 +3,7 @@ import unittest
 
 from openpyxl import Workbook
 
-from parser import ValidationError, parse_planning
+from parser import ValidationError, parse_planning, parse_planning_with_duplicates
 from parser.columns import PLANNING_COLUMNS
 
 
@@ -71,9 +71,25 @@ class TestParser(unittest.TestCase):
         self.assertEqual(points[0].locality, "")
 
     def test_duplicate_code(self):  # Тест №8
-        with self.assertRaises(ValidationError) as cm:
-            parse_planning(xlsx_with(PLANNING_COLUMNS, [row(), row()]))
-        self.assertIn("Дублирующийся", str(cm.exception))
+        # Дубли кода считаем один раз (первая строка).
+        points = parse_planning(xlsx_with(PLANNING_COLUMNS, [row(), row()]))
+        self.assertEqual(len(points), 1)
+        self.assertEqual(points[0].id, "A001")
+
+    def test_duplicate_code_reported(self):
+        points, duplicates = parse_planning_with_duplicates(xlsx_with(PLANNING_COLUMNS, [row(), row()]))
+        self.assertEqual(len(points), 1)
+        self.assertEqual(len(duplicates), 1)
+        self.assertEqual(duplicates[0]["code"], "A001")
+
+    def test_placeholder_code_generates_id(self):
+        # «-» (заглушка) вместо кода — генерируем уникальный код, без дублей.
+        points = parse_planning(xlsx_with(PLANNING_COLUMNS, [
+            row(**{"Единый код": "-"}),
+            row(**{"Единый код": "-", "Населенный пункт": "Москва"}),
+        ]))
+        self.assertEqual(len(points), 2)
+        self.assertNotEqual(points[0].id, points[1].id)
 
     def test_invalid_frequency(self):
         with self.assertRaises(ValidationError):
