@@ -621,6 +621,10 @@ section.panel { padding: 28px; }
 .site-footer .footer-handle {
   color: #d62828;
   font-weight: 600;
+  text-decoration: none;
+}
+.site-footer .footer-handle:hover {
+  text-decoration: underline;
 }
 
 /* ── Подсказки адресов (автодополнение DaData) ─────────────── */
