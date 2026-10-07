@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from .assignment import assign_days, estimate_scale
+from .assignment import assign_days, consolidate_locations, estimate_scale
 from .calendar import working_days
 from .clusterer import cluster_points
 from .distance import haversine_km
@@ -104,7 +104,10 @@ def build_route(
     cluster = cluster_points(points, eps_km, node_distance)
     visits, warnings = expand_visits(points, n_days, cluster)
 
-    coords = {p.id: (p.latitude, p.longitude) for p in points if p.has_coords}
+    coords: dict[str, tuple[float, float]] = {}
+    for p in points:
+        if p.latitude is not None and p.longitude is not None:
+            coords[p.id] = (p.latitude, p.longitude)
     if caps is not None and sum(caps) < len(visits):
         floor = (len(visits) + n_days - 1) // n_days
         warnings.append(
@@ -112,6 +115,8 @@ def build_route(
             f"суммарной ёмкости {sum(caps)}. Лимиты смягчены до минимум {floor} в день."
         )
     day_visits, load = assign_days(visits, n_days, dist_fn=node_distance, coords=coords, caps=caps)
+    # Точки одного места (одинаковые координаты) — в один день, а не вразнобой.
+    day_visits, load = consolidate_locations(day_visits, load, visits, coords)
 
     point_by_id = {p.id: p for p in points}
     points_by_visit = {v.visit_id: point_by_id[v.point_id] for v in visits}

@@ -19,6 +19,8 @@
 """
 from __future__ import annotations
 
+from collections import Counter
+
 from .models import Visit
 
 
@@ -217,5 +219,71 @@ def assign_days(
                 medoid[o] = next(iter(day_points[o]), None)
             if medoid[u] is None:
                 medoid[u] = pid
+
+    return day_visits, load
+
+
+def _coords_key(c: tuple[float, float]) -> tuple[float, float]:
+    """Ключ «одного места»: координаты, округлённые до ~10 м."""
+    return (round(c[0], 4), round(c[1], 4))
+
+
+def consolidate_locations(
+    day_visits: list[list[str]],
+    load: list[int],
+    visits: list[Visit],
+    coords: dict[str, tuple[float, float]],
+) -> tuple[list[list[str]], list[int]]:
+    """Собирает точки одного места (одинаковые координаты) в один день.
+
+    Обратная связь с полей: если в одном месте (ТЦ, бизнес-центр) много точек,
+    удобнее объехать их все за один день, чем дробить на несколько дней и
+    возвращаться. Запускается ПОСЛЕ assign_days (включая балансировку) — это
+    финальное слово; ради «кучности» одного места дневной лимит может быть
+    превышен.
+    """
+    if not coords:
+        return day_visits, load
+
+    visit_day: dict[str, int] = {}
+    for d, vids in enumerate(day_visits):
+        for vid in vids:
+            visit_day[vid] = d
+
+    point_visits: dict[str, list[Visit]] = {}
+    for v in visits:
+        point_visits.setdefault(v.point_id, []).append(v)
+
+    # group_key -> slot_index -> [visit_id]
+    slot_groups: dict[tuple, dict[int, list[str]]] = {}
+    for v in visits:
+        c = coords.get(v.point_id)
+        if c is None:
+            continue
+        slot_groups.setdefault(_coords_key(c), {}).setdefault(v.slot_index, []).append(v.visit_id)
+
+    for key, slots in slot_groups.items():
+        for slot, vids in slots.items():
+            if len(vids) < 2:
+                continue
+            days = [visit_day[v] for v in vids]
+            if len(set(days)) <= 1:
+                continue
+            # Целевой день — с наибольшим числом визитов этого слота (при равенстве — менее загруженный).
+            cnt = Counter(days)
+            target = max(cnt.keys(), key=lambda d: (cnt[d], -load[d]))
+            for vid in vids:
+                old = visit_day[vid]
+                if old == target:
+                    continue
+                pid = vid.rsplit("#", 1)[0]
+                # Не ставим одну точку дважды в один день (разные слоты точки).
+                if any(v2.visit_id in day_visits[target] for v2 in point_visits.get(pid, [])):
+                    continue
+                day_visits[old].remove(vid)
+                day_visits[target].append(vid)
+                load[old] -= 1
+                load[target] += 1
+                visit_day[vid] = target
 
     return day_visits, load

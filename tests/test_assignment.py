@@ -1,6 +1,6 @@
 import unittest
 
-from optimizer.assignment import assign_days
+from optimizer.assignment import assign_days, consolidate_locations
 from optimizer.models import Visit
 
 
@@ -134,6 +134,17 @@ class TestAssignment(unittest.TestCase):
         day_visits, load = assign_days(visits, 3, caps=[5, 3, 2])
         self.assertEqual(sum(load), 10)
         self.assertTrue(all(l <= c for l, c in zip(load, [5, 3, 2])))
+
+    def test_consolidate_locations_pulls_split_group_together(self):
+        # 4 точки в одном месте, разложены по 2 дням — собираем в один день.
+        coords = {f"p{i}": (55.75, 37.61) for i in range(4)}
+        visits = [Visit(f"p{i}", 0, 0) for i in range(4)]
+        day_visits = [["p0#0", "p1#0"], ["p2#0", "p3#0"]]
+        load = [2, 2]
+        new_day, new_load = consolidate_locations(day_visits, load, visits, coords)
+        self.assertEqual(sum(len(d) for d in new_day), 4)
+        self.assertEqual(sum(new_load), 4)
+        self.assertTrue(any(len(d) == 4 for d in new_day))
 
     def test_caps_infeasible_softens(self):
         visits = [Visit(f"p{i}", 0, 0) for i in range(10)]

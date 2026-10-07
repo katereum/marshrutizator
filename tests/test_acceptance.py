@@ -70,8 +70,20 @@ class TestAcceptance(unittest.TestCase):
         pid = self._upload("sample_data/planning.xlsx", "/api/upload/planning")
         tid = self._upload("sample_data/route_template.xlsx", "/api/upload/route-template")
 
+        # Разные адреса -> разные координаты (иначе все точки «в одном месте»,
+        # и новый этап сборки по месту схлопнет их в один день).
+        _seen: dict[str, int] = {}
+        _counter = [0]
+
+        def _geo(address):
+            if address not in _seen:
+                _seen[address] = _counter[0]
+                _counter[0] += 1
+            i = _seen[address]
+            return (55.70 + (i % 10) * 0.01, 37.40 + (i // 10) * 0.01)
+
         with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road, patch("backend.app.route_geometry") as mock_route_geo:
-            mock_geo.geocode.side_effect = lambda address: (55.75, 37.61)
+            mock_geo.geocode.side_effect = _geo
             mock_road.matrix.side_effect = lambda origins, destinations: [
                 [0.0 if o == d else 1.0 for d in destinations]
                 for o in origins
