@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from exporter.exporter import export_route
@@ -470,6 +470,23 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 
+def _static_version() -> str:
+    """Версия изменяемой статики: время правки app.js (меняется при каждом деплое).
+
+    Используется для «пробития» кэша браузера: при обновлении ссылки на
+    styles.css/app.js получают новый `?v=…`, и тестеры видят свежую версию без
+    Ctrl+Shift+R.
+    """
+    try:
+        return str(int((FRONTEND_DIR / "app.js").stat().st_mtime))
+    except OSError:
+        return "1"
+
+
 @app.get("/")
 def index():
-    return FileResponse(FRONTEND_DIR / "index.html")
+    version = _static_version()
+    html = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+    html = html.replace("/static/styles.css", f"/static/styles.css?v={version}")
+    html = html.replace("/static/app.js", f"/static/app.js?v={version}")
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
