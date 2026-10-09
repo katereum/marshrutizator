@@ -13,11 +13,17 @@ from .models import Point
 def cluster_points(points: list[Point], eps_km: float = 5.0, dist_fn=None) -> dict[str, int]:
     """Возвращает отображение point_id -> cluster_id.
 
-    `dist_fn(id_a, id_b) -> км` позволяет использовать дорожные расстояния
-    вместо прямой (haversine).
+    Дискретный «район» = станция метро (или населённый пункт). Кластеризация по
+    расстоянию здесь НЕ годится: в плотном городе точки выстраиваются в цепочки
+    меньше eps и склеиваются в один гигантский кластер (весь город), из-за чего
+    «районы» теряют смысл. Поэтому когда есть метро — группируем по нему; иначе
+    (нет метро) — по расстоянию, `dist_fn` позволяет использовать дорожные
+    расстояния вместо прямой (haversine).
     """
     if not points:
         return {}
+    if any(p.metro.strip() for p in points):
+        return _cluster_by_address(points)
     if all(p.has_coords for p in points):
         return _cluster_by_distance(points, eps_km, dist_fn)
     return _cluster_by_address(points)
