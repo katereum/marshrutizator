@@ -116,10 +116,35 @@ def assign_days(
     visit_info = {v.visit_id: v for v in visits}
 
     points = list(by_point.keys())
-    if coords is not None and all(coords.get(p) for p in points):
-        # Сначала «якоря» — точки с большей частотой: они задают разнесённые по
-        # месяцу дни, вокруг которых затем группируются соседние точки (частота 1).
-        # Вторично — пространственная развёртка (запад→восток).
+    # Кластер (район) каждой точки — для компактных дней по районам.
+    point_cluster: dict[str, int] = {}
+    for v in visits:
+        if v.cluster_id >= 0:
+            point_cluster.setdefault(v.point_id, v.cluster_id)
+
+    # Порядок точек: сначала по району (кластеру), затем внутри района — по
+    # частоте (якоря) и географии. Так точки одного района идут подряд и
+    # попадают в один (или соседние) дни, а не размазываются по всему городу.
+    if coords is not None and point_cluster and all(coords.get(p) for p in points):
+        centroid: dict[int, tuple[float, float, int]] = {}
+        for pid, c in point_cluster.items():
+            cc = coords.get(pid)
+            if cc is None:
+                continue
+            lat, lon, n = centroid.get(c, (0.0, 0.0, 0))
+            centroid[c] = (lat + cc[0], lon + cc[1], n + 1)
+        center = {c: (v[0] / v[2], v[1] / v[2]) for c, v in centroid.items()}
+        ranked = sorted(center.keys(), key=lambda c: center[c])
+        cluster_rank = {c: i for i, c in enumerate(ranked)}
+
+        def _key(p):
+            c = point_cluster.get(p, -1)
+            rk = cluster_rank.get(c, 1 << 30)
+            cc = coords.get(p, (0.0, 0.0))
+            return (rk, -freq[p], cc[1], cc[0], p)
+
+        order = sorted(points, key=_key)
+    elif coords is not None and all(coords.get(p) for p in points):
         order = sorted(points, key=lambda p: (-freq[p], coords[p][1], coords[p][0], p))
     else:
         order = sorted(points, key=lambda p: (-freq[p], p))
@@ -133,6 +158,19 @@ def assign_days(
     day_visits: list[list[str]] = [[] for _ in range(n_days)]
     load = [0] * n_days
     medoid: list[str | None] = [None] * n_days
+
+    # Кластеры по дням — чтобы точки одного района шли в один день.
+    day_clusters: list[set[int]] = [set() for _ in range(n_days)]
+    placed_clusters: set[int] = set()
+    cluster_penalty_km = 10.0 * scale
+
+    def cluster_penalty(pid: str, d: int) -> float:
+        c = point_cluster.get(pid)
+        if c is None:
+            return 0.0
+        if c in day_clusters[d]:
+            return 0.0
+        return cluster_penalty_km if c in placed_clusters else 0.0
 
     def day_cost(pid: str, d: int) -> float:
         if dist_fn is None:
@@ -159,7 +197,7 @@ def assign_days(
             for d in range(n_days):
                 if d in chosen or load[d] >= caps[d]:
                     continue
-                cost = day_cost(pid, d) + cycle_weight * cycle_penalty(pid, v.slot_index, f, d)
+                cost = day_cost(pid, d) + cluster_penalty(pid, d) + cycle_weight * cycle_penalty(pid, v.slot_index, f, d)
                 key = (cost, load[d], d)
                 if best_key is None or key < best_key:
                     best_key = key
@@ -173,6 +211,10 @@ def assign_days(
             day_points[best_d].add(pid)
             day_visits[best_d].append(v.visit_id)
             load[best_d] += 1
+            c = point_cluster.get(pid)
+            if c is not None:
+                day_clusters[best_d].add(c)
+                placed_clusters.add(c)
             if medoid[best_d] is None:
                 medoid[best_d] = pid
 
