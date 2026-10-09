@@ -162,7 +162,9 @@ def assign_days(
     # Кластеры по дням — чтобы точки одного района шли в один день.
     day_clusters: list[set[int]] = [set() for _ in range(n_days)]
     placed_clusters: set[int] = set()
-    cluster_penalty_km = 10.0 * scale
+    # Большой фиксированный штраф: точка одного района ОЧЕНЬ не хочет идти в день,
+    # где её района ещё нет (кроме случая, когда «родной» день уже заполнен).
+    cluster_penalty_km = 1e6
 
     def cluster_penalty(pid: str, d: int) -> float:
         c = point_cluster.get(pid)
@@ -327,5 +329,67 @@ def consolidate_locations(
                 load[old] -= 1
                 load[target] += 1
                 visit_day[vid] = target
+
+    return day_visits, load
+
+
+def consolidate_clusters(
+    day_visits: list[list[str]],
+    load: list[int],
+    visits: list[Visit],
+    caps: list[int] | None = None,
+) -> tuple[list[list[str]], list[int]]:
+    """Собирает точки одного района (кластера) в минимальное число смежных дней.
+
+    Идёт ПОСЛЕ assign_days и consolidate_locations. Если район размазался по
+    нескольким дням (например, большой район превысил дневной лимит), тянем его
+    точки к «опорному» дню и укладываем подряд, уважая лимит — так район занимает
+    соседние дни, а не разбросан по всему месяцу.
+    """
+    from collections import Counter
+
+    n_days = len(day_visits)
+    total = sum(load)
+    eff_cap = max(caps) if caps else ((total + n_days - 1) // n_days)
+
+    visit_day: dict[str, int] = {}
+    for d, vids in enumerate(day_visits):
+        for vid in vids:
+            visit_day[vid] = d
+
+    by_cluster: dict[int, list[str]] = {}
+    for v in visits:
+        if v.cluster_id >= 0:
+            by_cluster.setdefault(v.cluster_id, []).append(v.visit_id)
+
+    # Сортируем кластеры по опорному дню (приблизительно географический порядок),
+    # чтобы большие районы укладывались в свободные смежные дни, а не в кучу.
+    cluster_order: list[tuple[int, int, list[str]]] = []
+    for c, vids in by_cluster.items():
+        days = [visit_day[vid] for vid in vids]
+        if len(set(days)) <= 1:
+            continue  # уже в одном дне
+        target = Counter(days).most_common(1)[0][0]
+        cluster_order.append((target, c, vids))
+    cluster_order.sort()
+
+    for target, c, vids in cluster_order:
+        # Убираем все визиты района из их дней.
+        for vid in vids:
+            old = visit_day.pop(vid, None)
+            if old is not None:
+                day_visits[old].remove(vid)
+                load[old] -= 1
+        # Укладываем подряд, начиная с опорного дня (с учётом лимита).
+        ptr = target
+        for vid in vids:
+            while ptr < n_days and load[ptr] >= eff_cap:
+                ptr += 1
+            if ptr >= n_days:
+                # Свободных смежных дней не осталось — в наименее загруженный.
+                ptr = min(range(n_days), key=lambda d: load[d])
+            day_visits[ptr].append(vid)
+            load[ptr] += 1
+            visit_day[vid] = ptr
 
     return day_visits, load

@@ -25,7 +25,7 @@ def cluster_points(points: list[Point], eps_km: float = 5.0, dist_fn=None) -> di
     if any(p.metro.strip() for p in points):
         return _cluster_by_address(points)
     if all(p.has_coords for p in points):
-        return _cluster_by_distance(points, eps_km, dist_fn)
+        return _cluster_by_grid(points, eps_km / 111.0)
     return _cluster_by_address(points)
 
 
@@ -72,6 +72,28 @@ def _cluster_by_address(points: list[Point]) -> dict[str, int]:
     next_id = 0
     for p in points:
         key = (p.locality.strip().lower(), p.metro.strip().lower())
+        if key not in seen:
+            seen[key] = next_id
+            next_id += 1
+        cluster[p.id] = seen[key]
+    return cluster
+
+
+def _cluster_by_grid(points: list[Point], cell_deg: float) -> dict[str, int]:
+    """Группировка по квадратной сетке (без цепочек).
+
+    Точки в одной ячейке (~5 км) — один «район». Цепочечная кластеризация по
+    расстоянию здесь не годится: в плотном городе она склеивает всё в один
+    кластер. Сетка даёт дискретные районы без склейки.
+    """
+    cluster: dict[str, int] = {}
+    seen: dict[tuple, int] = {}
+    next_id = 0
+    for p in points:
+        if p.latitude is not None and p.longitude is not None:
+            key = (round(p.latitude / cell_deg), round(p.longitude / cell_deg))
+        else:
+            key = (p.locality.strip().lower(), p.metro.strip().lower())
         if key not in seen:
             seen[key] = next_id
             next_id += 1

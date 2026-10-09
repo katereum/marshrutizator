@@ -69,7 +69,7 @@ class TestAssignment(unittest.TestCase):
         for pid in west:
             visits += [Visit(pid, s, 0) for s in range(2 if pid == "w0" else 1)]
         for pid in east:
-            visits += [Visit(pid, s, 0) for s in range(2 if pid == "e0" else 1)]
+            visits += [Visit(pid, s, 1) for s in range(2 if pid == "e0" else 1)]
 
         # 10 визитов, 4 дня → потолок 3.
         day_visits, load = assign_days(visits, 4, dist_fn=dist, coords=coords)

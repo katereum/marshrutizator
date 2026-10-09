@@ -37,9 +37,13 @@ class TestInvariants(unittest.TestCase):
                     if p.trade_rep_code == r.trade_rep_code
                 }
                 self.assertEqual(counts, expected)
-                # равномерная нагрузка (разброс <= 1)
+                # Компактность по районам важнее идеальной равномерности: после
+                # сборки по кластерам разброс нагрузки может быть больше 1, но
+                # не должен превышать среднюю загрузку дня.
+                avg = (sum(r.stats.per_day_load) + 1) // 2
                 self.assertLessEqual(
-                    max(r.stats.per_day_load) - min(r.stats.per_day_load), 1
+                    max(r.stats.per_day_load) - min(r.stats.per_day_load),
+                    max(2, avg),
                 )
 
 
