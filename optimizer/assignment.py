@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+from .distance import haversine_km
 from .models import Visit
 
 
@@ -78,12 +79,15 @@ def assign_days(
     dist_fn=None,
     coords: dict[str, tuple[float, float]] | None = None,
     caps: list[int] | None = None,
+    home: tuple[float, float] | None = None,
 ) -> tuple[list[list[str]], list[int]]:
     """Распределяет визиты по дням. Возвращает (day_visits, load).
 
     `dist_fn(a, b) -> км` — дорожное расстояние между точками (опционально);
     `coords` — {point_id: (lat, lon)} для пространственного порядка;
     `caps` — макс. число точек на каждый день (len == n_days). None — авто-баланс.
+    `home` — (lat, lon) дома старта: районы сортируются по удалённости от дома,
+    чтобы ближние обслуживались в первые недели, дальние — позже.
     """
     if n_days < 1:
         raise ValueError("n_days должен быть >= 1")
@@ -134,7 +138,16 @@ def assign_days(
             lat, lon, n = centroid.get(c, (0.0, 0.0, 0))
             centroid[c] = (lat + cc[0], lon + cc[1], n + 1)
         center = {c: (v[0] / v[2], v[1] / v[2]) for c, v in centroid.items()}
-        ranked = sorted(center.keys(), key=lambda c: center[c])
+        if home is not None:
+            # От дома наружу: ближние районы обслуживаются раньше (недели 1–2),
+            # дальние — позже. Так маршрут идёт «спиралью» от дома, а не кругами
+            # по всему городу.
+            ranked = sorted(
+                center.keys(),
+                key=lambda c: haversine_km(home[0], home[1], center[c][0], center[c][1]),
+            )
+        else:
+            ranked = sorted(center.keys(), key=lambda c: center[c])
         cluster_rank = {c: i for i, c in enumerate(ranked)}
 
         def _key(p):
@@ -172,7 +185,17 @@ def assign_days(
             return 0.0
         if c in day_clusters[d]:
             return 0.0
-        return cluster_penalty_km if c in placed_clusters else 0.0
+        if c not in placed_clusters:
+            return 0.0
+        if freq[pid] > 1:
+            # Цикличность важнее кучности: штраф одинаковый, день выбирается по
+            # циклу (ideal_day), а не по близости к кластеру.
+            return cluster_penalty_km
+        # Частота 1: если «родной» день района заполнен, спилл должен уйти в
+        # СОСЕДНИЙ день, а не разлететься по всему городу. Штраф растёт с
+        # удалением от дней, где район уже стоит.
+        anchor = min(day for day in range(n_days) if c in day_clusters[day])
+        return cluster_penalty_km + abs(d - anchor) * seed_km
 
     def day_cost(pid: str, d: int) -> float:
         if dist_fn is None:
@@ -239,8 +262,9 @@ def assign_days(
                     if pid in day_points[u]:
                         continue  # одна точка не должна быть дважды в один день
                     geo = day_cost(pid, u)
+                    cl = cluster_penalty(pid, u)
                     cycle_delta = max(0.0, abs(u - ideal) - abs(o - ideal)) / max(1, n_days - 1)
-                    key = (geo + cycle_weight * cycle_delta, load[u], u)
+                    key = (geo + cl + cycle_weight * cycle_delta, load[u], u)
                     if best is None or key < best[0]:
                         best = (key, vid, u)
 
@@ -329,67 +353,5 @@ def consolidate_locations(
                 load[old] -= 1
                 load[target] += 1
                 visit_day[vid] = target
-
-    return day_visits, load
-
-
-def consolidate_clusters(
-    day_visits: list[list[str]],
-    load: list[int],
-    visits: list[Visit],
-    caps: list[int] | None = None,
-) -> tuple[list[list[str]], list[int]]:
-    """Собирает точки одного района (кластера) в минимальное число смежных дней.
-
-    Идёт ПОСЛЕ assign_days и consolidate_locations. Если район размазался по
-    нескольким дням (например, большой район превысил дневной лимит), тянем его
-    точки к «опорному» дню и укладываем подряд, уважая лимит — так район занимает
-    соседние дни, а не разбросан по всему месяцу.
-    """
-    from collections import Counter
-
-    n_days = len(day_visits)
-    total = sum(load)
-    eff_cap = max(caps) if caps else ((total + n_days - 1) // n_days)
-
-    visit_day: dict[str, int] = {}
-    for d, vids in enumerate(day_visits):
-        for vid in vids:
-            visit_day[vid] = d
-
-    by_cluster: dict[int, list[str]] = {}
-    for v in visits:
-        if v.cluster_id >= 0:
-            by_cluster.setdefault(v.cluster_id, []).append(v.visit_id)
-
-    # Сортируем кластеры по опорному дню (приблизительно географический порядок),
-    # чтобы большие районы укладывались в свободные смежные дни, а не в кучу.
-    cluster_order: list[tuple[int, int, list[str]]] = []
-    for c, vids in by_cluster.items():
-        days = [visit_day[vid] for vid in vids]
-        if len(set(days)) <= 1:
-            continue  # уже в одном дне
-        target = Counter(days).most_common(1)[0][0]
-        cluster_order.append((target, c, vids))
-    cluster_order.sort()
-
-    for target, c, vids in cluster_order:
-        # Убираем все визиты района из их дней.
-        for vid in vids:
-            old = visit_day.pop(vid, None)
-            if old is not None:
-                day_visits[old].remove(vid)
-                load[old] -= 1
-        # Укладываем подряд, начиная с опорного дня (с учётом лимита).
-        ptr = target
-        for vid in vids:
-            while ptr < n_days and load[ptr] >= eff_cap:
-                ptr += 1
-            if ptr >= n_days:
-                # Свободных смежных дней не осталось — в наименее загруженный.
-                ptr = min(range(n_days), key=lambda d: load[d])
-            day_visits[ptr].append(vid)
-            load[ptr] += 1
-            visit_day[vid] = ptr
 
     return day_visits, load
