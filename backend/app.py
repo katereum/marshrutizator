@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from exporter.exporter import export_route
 from exporter.geojson import build_geojson
-from geocoder.dadata import suggest_addresses
+from geocoder.dadata import DadataGeocoder, suggest_addresses
 from geocoder.offline import OfflineGeocoder
 from geocoder.yandex import YandexGeocoder
 from optimizer.models import HOME_ID, Point
@@ -54,7 +54,39 @@ except Exception:  # python-dotenv не обязателен
     pass
 
 store = JobStore()
-geocoder = YandexGeocoder() if os.environ.get("YANDEX_GEOCODER_API_KEY") else OfflineGeocoder()
+
+
+class _FallbackGeocoder:
+    """Пробует геокодеры по очереди: первый, кто дал координаты, побеждает.
+
+    Яндексовский ключ может быть недействителен (403) — тогда адрес геокодирует
+    DaData (ключ тот же, что и для подсказок). Всё кэшируется в памяти.
+    """
+
+    def __init__(self, geocoders):
+        self._geocoders = geocoders
+        self.last_error: str | None = None
+
+    def geocode(self, address: str):
+        errors = []
+        for g in self._geocoders:
+            ll = g.geocode(address)
+            if ll:
+                self.last_error = None
+                return ll
+            err = getattr(g, "last_error", None)
+            if err:
+                errors.append(err)
+        self.last_error = "; ".join(errors) if errors else "все геокодеры не дали результат"
+        return None
+
+
+_geocoders = []
+if os.environ.get("YANDEX_GEOCODER_API_KEY"):
+    _geocoders.append(YandexGeocoder())
+if os.environ.get("DADATA_API_KEY"):
+    _geocoders.append(DadataGeocoder())
+geocoder = _FallbackGeocoder(_geocoders) if _geocoders else OfflineGeocoder()
 
 _road_key = os.environ.get("YANDEX_ROUTING_API_KEY") or os.environ.get("YANDEX_GEOCODER_API_KEY")
 _road_providers = []
@@ -110,16 +142,29 @@ def suggest_address(query: str = ""):
     return {"suggestions": suggest_addresses(query)}
 
 
-def _human_address(p: Point) -> str:
-    """Собирает адрес для геокодера, понимая синонимы названий колонок."""
+def _human_address(p: Point, for_geocode: bool = False) -> str:
+    """Собирает адрес, понимая синонимы названий колонок.
+
+    `for_geocode=True` — упрощённый адрес для геокодера: «строение»/«корпус»
+    часто содержат павильоны/входы/стойки («к.Б пав.01А», «Вход 4»), которые
+    ломают поиск — оставляем только короткие числовые.
+    """
     o = p.original
 
     def s(key: str) -> str:
         v = resolve_column(o, key)
         return str(v).strip() if v is not None else ""
 
+    def _num(v: str) -> str:
+        return v if v and len(v) <= 4 and v.isdigit() else ""
+
     street = " ".join(x for x in [s("Тип улицы"), s("Название улицы")] if x)
-    house = " ".join(x for x in [s("Номер дома"), s("Номер строения"), s("Номер корпуса")] if x)
+    if for_geocode:
+        house = " ".join(
+            x for x in [s("Номер дома"), _num(s("Номер строения")), _num(s("Номер корпуса"))] if x
+        )
+    else:
+        house = " ".join(x for x in [s("Номер дома"), s("Номер строения"), s("Номер корпуса")] if x)
     return ", ".join(x for x in [s("Населенный пункт"), street, house] if x)
 
 
@@ -129,7 +174,7 @@ def _geocode_points(points: list[Point]) -> list[Point]:
         if p.has_coords:
             out.append(p)
             continue
-        ll = geocoder.geocode(_human_address(p))
+        ll = geocoder.geocode(_human_address(p, for_geocode=True))
         out.append(replace(p, latitude=ll[0], longitude=ll[1]) if ll else p)
     return out
 
