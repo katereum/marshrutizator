@@ -125,6 +125,10 @@ def assign_days(
     for v in visits:
         if v.cluster_id >= 0:
             point_cluster.setdefault(v.point_id, v.cluster_id)
+    # Размер кластера (число точек) — чтобы отличить одиночную точку от района.
+    cluster_size: dict[int, int] = {}
+    for pid, c in point_cluster.items():
+        cluster_size[c] = cluster_size.get(c, 0) + 1
 
     # Порядок точек: сначала по району (кластеру), затем внутри района — по
     # частоте (якоря) и географии. Так точки одного района идут подряд и
@@ -187,13 +191,11 @@ def assign_days(
             return 0.0
         if c not in placed_clusters:
             return 0.0
-        if freq[pid] > 1:
-            # Цикличность важнее кучности: штраф одинаковый, день выбирается по
-            # циклу (ideal_day), а не по близости к кластеру.
+        # Одиночный кластер (одна точка) — некуда «держаться»: работает глобальная
+        # цикличность. Многокточечный кластер (район) — точка тянется к «родным»
+        # дням района: спилл идёт в соседний день, а не разлетается по всему городу.
+        if cluster_size.get(c, 1) <= 1:
             return cluster_penalty_km
-        # Частота 1: если «родной» день района заполнен, спилл должен уйти в
-        # СОСЕДНИЙ день, а не разлететься по всему городу. Штраф растёт с
-        # удалением от дней, где район уже стоит.
         anchor = min(day for day in range(n_days) if c in day_clusters[day])
         return cluster_penalty_km + abs(d - anchor) * seed_km
 
@@ -353,5 +355,69 @@ def consolidate_locations(
                 load[old] -= 1
                 load[target] += 1
                 visit_day[vid] = target
+
+    return day_visits, load
+
+
+def tidy_days(
+    day_visits: list[list[str]],
+    load: list[int],
+    visits: list[Visit],
+    coords: dict[str, tuple[float, float]],
+    caps: list[int] | None = None,
+) -> tuple[list[list[str]], list[int]]:
+    """Убирает «выбросы»: точку далеко от центра своего дня тянет в ближайший день.
+
+    Идёт ПОСЛЕ assign_days и consolidate_locations. Добивает последние «круги» —
+    когда в день случайно попала точка из другого конца города (например, второй
+    слот частой точки, которой не хватило места в «родном» дне).
+    """
+    n_days = len(day_visits)
+    total = sum(load)
+    cap = list(caps) if caps else [((total + n_days - 1) // n_days)] * n_days
+
+    point_coords = {v.point_id: coords[v.point_id] for v in visits if v.point_id in coords}
+    visit_pid = {v.visit_id: v.point_id for v in visits}
+
+    for _ in range(3):
+        # Центроид каждого дня по геокодированным точкам.
+        centroid: dict[int, tuple[float, float]] = {}
+        for d in range(n_days):
+            cs = [point_coords[visit_pid[vid]] for vid in day_visits[d] if visit_pid[vid] in point_coords]
+            if cs:
+                centroid[d] = (sum(c[0] for c in cs) / len(cs), sum(c[1] for c in cs) / len(cs))
+
+        day_pids = [{visit_pid[v] for v in day_visits[d]} for d in range(n_days)]
+        moved = False
+        for d in range(n_days):
+            if d not in centroid:
+                continue
+            for vid in list(day_visits[d]):
+                pid = visit_pid[vid]
+                if pid not in point_coords:
+                    continue
+                c = point_coords[pid]
+                own = haversine_km(c[0], c[1], centroid[d][0], centroid[d][1])
+                best = None
+                for d2 in range(n_days):
+                    if d2 == d or d2 not in centroid or load[d2] >= cap[d2]:
+                        continue
+                    if pid in day_pids[d2]:
+                        continue
+                    dist = haversine_km(c[0], c[1], centroid[d2][0], centroid[d2][1])
+                    if dist < own and (best is None or dist < best[0]):
+                        best = (dist, d2)
+                # Перекладываем, только если это заметно сокращает разлёт (> 2 км).
+                if best is not None and own - best[0] > 2.0:
+                    d2 = best[1]
+                    day_visits[d].remove(vid)
+                    day_visits[d2].append(vid)
+                    day_pids[d].discard(pid)
+                    day_pids[d2].add(pid)
+                    load[d] -= 1
+                    load[d2] += 1
+                    moved = True
+        if not moved:
+            break
 
     return day_visits, load
