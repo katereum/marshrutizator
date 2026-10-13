@@ -131,39 +131,6 @@ def _geocode_points(points: list[Point]) -> list[Point]:
             continue
         ll = geocoder.geocode(_human_address(p))
         out.append(replace(p, latitude=ll[0], longitude=ll[1]) if ll else p)
-    return _snap_geocode_outliers(out)
-
-
-def _snap_geocode_outliers(points: list[Point], threshold_km: float = 5.0) -> list[Point]:
-    """Прижимает точки, которые геокодер увёз далеко от их станции метро.
-
-    Опечатка или неоднозначная улица («Ключевая», «Кировоградская») увезёт точку
-    на 10–20 км от реального места — маршрут выглядит «кругом». Опора — сама
-    станция метро (геокодируем её имя), она надёжна: если точка дальше порога от
-    своей станции, прижимаем к станции.
-    """
-    from optimizer.distance import haversine_km
-
-    stations: dict[str, tuple[float, float]] = {}
-    for p in points:
-        m = p.metro.strip()
-        if m and m not in stations:
-            name = m.split("(")[0].strip()
-            ll = geocoder.geocode(f"Москва, метро {name}")
-            if ll:
-                stations[m] = ll
-
-    out: list[Point] = []
-    for p in points:
-        m = p.metro.strip()
-        if p.latitude is None or p.longitude is None or m not in stations:
-            out.append(p)
-            continue
-        slat, slon = stations[m]
-        if haversine_km(p.latitude, p.longitude, slat, slon) > threshold_km:
-            out.append(replace(p, latitude=slat, longitude=slon))
-        else:
-            out.append(p)
     return out
 
 
