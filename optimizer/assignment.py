@@ -400,7 +400,7 @@ def tidy_days(
                 own = haversine_km(c[0], c[1], centroid[d][0], centroid[d][1])
                 best = None
                 for d2 in range(n_days):
-                    if d2 == d or d2 not in centroid or load[d2] >= cap[d2]:
+                    if d2 == d or d2 not in centroid or load[d2] >= cap[d2] + 1:
                         continue
                     if pid in day_pids[d2]:
                         continue

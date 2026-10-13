@@ -23,7 +23,10 @@ def cluster_points(points: list[Point], eps_km: float = 5.0, dist_fn=None) -> di
     if not points:
         return {}
     if any(p.metro.strip() for p in points):
-        return _cluster_by_address(points)
+        cluster = _cluster_by_address(points)
+        # Соседние станции метро (один «район») сливаем в куст, чтобы объезжать
+        # их вместе, а не возвращаться. Диаметр куста ограничен — без цепочек.
+        return _merge_neighbors(cluster, points, max_diameter_km=2.5)
     if all(p.has_coords for p in points):
         return _cluster_by_grid(points, eps_km / 111.0)
     return _cluster_by_address(points)
@@ -99,3 +102,78 @@ def _cluster_by_grid(points: list[Point], cell_deg: float) -> dict[str, int]:
             next_id += 1
         cluster[p.id] = seen[key]
     return cluster
+
+
+def _merge_neighbors(
+    cluster: dict[str, int],
+    points: list[Point],
+    max_diameter_km: float,
+) -> dict[str, int]:
+    """Сливает соседние станции метро в один «район»-куст.
+
+    Станция метро — слишком мелкая единица: соседние станции (1,5–2 км) — это
+    один район, и объезжать их надо вместе, а не ездить туда-обратно. Жадное
+    слияние по возрастанию расстояния между станциями, но диаметр куста
+    ограничен `max_diameter_km` — поэтому цепочка станций вдоль линии НЕ
+    склеивается в один гигантский куст, а делится на компактные сегменты.
+    """
+    by_c: dict[int, list[tuple[float, float]]] = {}
+    for p in points:
+        c = cluster.get(p.id)
+        if c is not None and p.latitude is not None and p.longitude is not None:
+            by_c.setdefault(c, []).append((p.latitude, p.longitude))
+    if not by_c:
+        return cluster
+
+    centroids = {
+        c: (sum(x[0] for x in cs) / len(cs), sum(x[1] for x in cs) / len(cs))
+        for c, cs in by_c.items()
+    }
+    parent = {c: c for c in centroids}
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    # BBox каждой группы для ограничения диаметра.
+    bbox = {
+        c: [centroids[c][0], centroids[c][0], centroids[c][1], centroids[c][1]]
+        for c in centroids
+    }
+
+    def merged_diag(a: int, b: int) -> float:
+        la1, la2, lo1, lo2 = bbox[a]
+        bb = bbox[b]
+        return haversine_km(
+            min(la1, bb[0]), min(lo1, bb[2]), max(la2, bb[1]), max(lo2, bb[3])
+        )
+
+    keys = sorted(centroids)
+    pairs: list[tuple[float, int, int]] = []
+    for i in range(len(keys)):
+        for j in range(i + 1, len(keys)):
+            a, b = keys[i], keys[j]
+            ca, cb = centroids[a], centroids[b]
+            pairs.append((haversine_km(ca[0], ca[1], cb[0], cb[1]), a, b))
+    pairs.sort()
+
+    for d, a, b in pairs:
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            continue
+        if merged_diag(ra, rb) <= max_diameter_km:
+            parent[ra] = rb
+            bb = bbox[rb]
+            la1, la2, lo1, lo2 = bbox[ra]
+            bbox[rb] = [min(la1, bb[0]), max(la2, bb[1]), min(lo1, bb[2]), max(lo2, bb[3])]
+
+    root_to_new: dict[int, int] = {}
+    new_cluster: dict[str, int] = {}
+    for pid, c in cluster.items():
+        r = find(c) if c in parent else c
+        if r not in root_to_new:
+            root_to_new[r] = len(root_to_new)
+        new_cluster[pid] = root_to_new[r]
+    return new_cluster
