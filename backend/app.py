@@ -383,14 +383,21 @@ def optimize(req: OptimizeRequest):
                     "geocoder": reason,
                 },
             )
-        # Часть точек не геокодировалась (адрес не найден) — пропускаем их и
-        # строим маршрут по остальным, с предупреждением и номерами строк.
-        rows = ", ".join(str(p.row) for p in missing[:30])
+        # Часть точек не геокодировалась (адрес не найден) — перечисляем строки
+        # с адресами: маршрут для них не планируется, остальные строятся.
+        def _addr(p: Point) -> str:
+            a = _human_address(p).strip()
+            return a or (p.normalized_address or "адрес не указан")
+
+        lines = [
+            f"строка {p.row}: {_addr(p)} — адрес не найден, маршрут не запланирован"
+            for p in missing[:30]
+        ]
         if len(missing) > 30:
-            rows += ", …"
+            lines.append(f"… и ещё {len(missing) - 30}")
         geocode_warning = (
-            f"{len(missing)} точек не удалось геокодировать (строки: {rows}) — "
-            f"они не вошли в маршрут. Причина: {getattr(geocoder, 'last_error', None) or 'адрес не найден'}."
+            f"Не геокодировано {len(missing)} точек — маршрут для них не запланирован:\n"
+            + "\n".join(lines)
         )
         logger.warning("Не геокодировано %d точек", len(missing))
         points = [p for p in points if p.has_coords]

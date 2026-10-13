@@ -502,6 +502,7 @@ optimizeBtn.addEventListener("click", async () => {
         }
         if (parts.length) {
           meta.textContent = parts.join(". ");
+          meta.style.whiteSpace = "pre-line";
           meta.classList.remove("hidden");
         }
       })
