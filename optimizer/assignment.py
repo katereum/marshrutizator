@@ -214,36 +214,49 @@ def assign_days(
         ideal = ideal_day(slot, f, n_days)
         return abs(d - ideal) / max(1, n_days - 1)
 
-    # 1. Географическое размещение.
+    # 1. Географическое размещение — в два прохода:
+    #    а) покрытие: первые визиты всех точек (слот 0), ближние районы раньше;
+    #    б) цикличность: повторные визиты (слот 1+) — к концу месяца.
+    ordered_visits = []
     for pid in order:
-        f = freq[pid]
-        chosen: set[int] = set()
-        for v in by_point[pid]:
-            best_d = None
-            best_key = None
-            for d in range(n_days):
-                if d in chosen or load[d] >= caps[d]:
-                    continue
-                cost = day_cost(pid, d) + cluster_penalty(pid, d) + cycle_weight * cycle_penalty(pid, v.slot_index, f, d)
-                key = (cost, load[d], d)
-                if best_key is None or key < best_key:
-                    best_key = key
-                    best_d = d
-            if best_d is None:
-                # Все непустые дни заполнены или уже заняты точкой — берём
-                # наименее загруженный свободный день.
-                best_d = min((d for d in range(n_days) if d not in chosen), key=lambda d: load[d])
+        ordered_visits += [(pid, v) for v in by_point[pid] if v.slot_index == 0]
+    for pid in order:
+        ordered_visits += [(pid, v) for v in by_point[pid] if v.slot_index > 0]
 
-            chosen.add(best_d)
-            day_points[best_d].add(pid)
-            day_visits[best_d].append(v.visit_id)
-            load[best_d] += 1
-            c = point_cluster.get(pid)
-            if c is not None:
-                day_clusters[best_d].add(c)
-                placed_clusters.add(c)
-            if medoid[best_d] is None:
-                medoid[best_d] = pid
+    chosen_by_pid: dict[str, set[int]] = {}
+    for pid, v in ordered_visits:
+        f = freq[pid]
+        chosen = chosen_by_pid.setdefault(pid, set())
+        best_d = None
+        best_key = None
+        for d in range(n_days):
+            if d in chosen or load[d] >= caps[d]:
+                continue
+            if v.slot_index > 0:
+                # Цикличность: повторный визит тянем к концу месяца (по циклу).
+                cost = cycle_weight * cycle_penalty(pid, v.slot_index, f, d)
+            else:
+                # Покрытие: район + близость, день за днём, ближние районы раньше.
+                cost = day_cost(pid, d) + cluster_penalty(pid, d)
+            key = (cost, load[d], d)
+            if best_key is None or key < best_key:
+                best_key = key
+                best_d = d
+        if best_d is None:
+            # Все непустые дни заполнены или уже заняты точкой — берём
+            # наименее загруженный свободный день.
+            best_d = min((d for d in range(n_days) if d not in chosen), key=lambda d: load[d])
+
+        chosen.add(best_d)
+        day_points[best_d].add(pid)
+        day_visits[best_d].append(v.visit_id)
+        load[best_d] += 1
+        c = point_cluster.get(pid)
+        if c is not None:
+            day_clusters[best_d].add(c)
+            placed_clusters.add(c)
+        if medoid[best_d] is None:
+            medoid[best_d] = pid
 
     # 2. Ремонт балансировки (разброс нагрузки ≤ 1), минимальный ущерб географии.
     # При явных лимитах на день баланс уже задан лимитами — ремонт не нужен.
@@ -395,6 +408,10 @@ def tidy_days(
             for vid in list(day_visits[d]):
                 pid = visit_pid[vid]
                 if pid not in point_coords:
+                    continue
+                # Цикличность (повторные визиты, слот 1+) не подтягиваем к району —
+                # по задумке она остаётся в конце месяца, отдельно от покрытия.
+                if not vid.endswith("#0"):
                     continue
                 c = point_coords[pid]
                 own = haversine_km(c[0], c[1], centroid[d][0], centroid[d][1])

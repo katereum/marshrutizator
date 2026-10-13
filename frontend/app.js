@@ -264,6 +264,8 @@ function renderMap(jobId) {
         const scoreTxt = pr.score_text && pr.score_text !== "—" ? pr.score_text : "";
         const resultTxt = pr.result_text && pr.result_text !== "—" ? pr.result_text : "";
         let meta = "";
+        if (pr.partner && pr.partner !== "—") meta += `<span class="pt-meta">Партнер: <b>${escapeHtml(pr.partner)}</b></span>`;
+        meta += `<span class="pt-meta">Цикличность: <b>${pr.frequency}</b> раз/мес</span>`;
         if (scoreTxt) meta += `<span class="pt-meta">Оценка: <b>${escapeHtml(scoreTxt)}</b></span>`;
         if (resultTxt) meta += `<span class="pt-meta">Результат: <b>${escapeHtml(resultTxt)}</b></span>`;
         if (pr.priority > 0) meta += `<span class="pt-meta">Приоритет: <b>${pr.priority}</b></span>`;

@@ -111,6 +111,8 @@ def build_geojson(
                     "result": point.result,
                     "score_text": _display(point, "Оценка"),
                     "result_text": _display(point, "Результат"),
+                    "frequency": point.frequency,
+                    "partner": _display(point, "Партнер"),
                     "priority": round(priority_by_id.get(point.id, 0.0), 3),
                 },
                 "geometry": {"type": "Point", "coordinates": [point.longitude, point.latitude]},
