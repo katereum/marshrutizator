@@ -363,23 +363,34 @@ def optimize(req: OptimizeRequest):
             home_by_weekday = mapped
 
     missing = [p for p in points if not p.has_coords]
+    geocode_warning = None
     if missing:
-        reason = getattr(geocoder, "last_error", None)
-        msg = (
-            "Не удалось геокодировать все точки — без координат невозможно "
-            "построить маршрут по дорогам."
+        if len(missing) == len(points):
+            # Вообще ничего не геокодировалось — нет ключа или ключ недействителен.
+            reason = getattr(geocoder, "last_error", None)
+            msg = (
+                "Не удалось геокодировать все точки — без координат невозможно "
+                "построить маршрут по дорогам."
+            )
+            if reason:
+                msg += f" Причина: {reason}."
+            logger.error("Геокодирование не удалось: %s", reason)
+            raise OptimizationError(
+                msg,
+                {
+                    "count": len(missing),
+                    "points": [{"id": p.id, "address": _human_address(p)} for p in missing[:20]],
+                    "geocoder": reason,
+                },
+            )
+        # Часть точек не геокодировалась (адрес не найден) — пропускаем их и
+        # строим маршрут по остальным, с предупреждением.
+        geocode_warning = (
+            f"{len(missing)} точек не удалось геокодировать — они не вошли в "
+            f"маршрут. Причина: {getattr(geocoder, 'last_error', None) or 'адрес не найден'}."
         )
-        if reason:
-            msg += f" Причина: {reason}."
-        logger.error("Геокодирование не удалось: %s", reason)
-        raise OptimizationError(
-            msg,
-            {
-                "count": len(missing),
-                "points": [{"id": p.id, "address": _human_address(p)} for p in missing[:20]],
-                "geocoder": reason,
-            },
-        )
+        logger.warning("Не геокодировано %d точек", len(missing))
+        points = [p for p in points if p.has_coords]
 
     road_matrix = _build_road_matrix(points, home)
     node_count = len(points) + (1 if home is not None else 0)
@@ -437,6 +448,9 @@ def optimize(req: OptimizeRequest):
     if road_warning:
         for r in results:
             r.warnings.append(road_warning)
+    if geocode_warning:
+        for r in results:
+            r.warnings.append(geocode_warning)
 
     store.update(job_id, status="EXPORTING")
     points_by_id = {p.id: p for p in points}
