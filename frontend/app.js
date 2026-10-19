@@ -378,15 +378,23 @@ function confirmCapacity(data) {
     const diff = data.difference;
     const canStrict = diff < 0 && data.points_per_day;
 
+    const WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+    const overrides = data.overrides || {};
+    const ovText = Object.keys(overrides)
+      .map((w) => `${WD[w]}: ${overrides[w]}`)
+      .join(", ");
+    const limitDesc = `${data.points_per_day}/день${ovText ? `, ${ovText}` : ""}`;
+
     if (diff > 0) {
       text.textContent =
-        `В базе ${data.total_visits} визитов, а лимиты вмещают ${data.target_capacity} — лишних ${diff}. ` +
-        `Смягчить лимиты и распределить равномерно (~${data.avg_per_day} в день)?`;
+        `В базе ${data.total_visits} визитов, а по лимитам (${limitDesc}) помещается ${data.target_capacity} — ` +
+        `лишних ${diff}. Смягчить базовый лимит до ${data.softened_base}/день` +
+        (ovText ? " (особые дни останутся)" : "") + "?";
       okBtn.textContent = "Продолжить";
     } else {
       text.textContent =
-        `В базе ${data.total_visits} визитов, а по лимиту ${data.points_per_day}/день нужно ${data.target_capacity} — ` +
-        `не хватает ${-diff}. Выбери, как заполнить дни.`;
+        `В базе ${data.total_visits} визитов, а по лимитам (${limitDesc}) нужно ${data.target_capacity} — ` +
+        `не хватает ${-diff}. Выбери, как заполнить.`;
       okBtn.textContent = `Усреднить (~${data.avg_per_day}/день)`;
     }
 

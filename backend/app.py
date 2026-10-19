@@ -454,6 +454,9 @@ def optimize(req: OptimizeRequest):
             base_raw = req.points_per_day if req.points_per_day is not None else (total_visits + n - 1) // n
             target = sum(overrides.get(d.weekday(), base_raw) for d in wdays)
             if total_visits != target:
+                override_slots = sum(overrides.get(d.weekday(), 0) for d in wdays)
+                num_base = sum(1 for d in wdays if d.weekday() not in overrides)
+                softened_base = max(1, (total_visits - override_slots + num_base - 1) // num_base) if num_base else 0
                 full_days = total_visits // base_raw if base_raw else 0
                 leftover = total_visits % base_raw if base_raw else 0
                 return JSONResponse(
@@ -465,6 +468,8 @@ def optimize(req: OptimizeRequest):
                         "difference": total_visits - target,
                         "avg_per_day": round(total_visits / n, 1),
                         "points_per_day": req.points_per_day,
+                        "overrides": overrides,
+                        "softened_base": softened_base,
                         "full_days": full_days,
                         "leftover": leftover,
                     },
