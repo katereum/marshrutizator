@@ -470,8 +470,14 @@ def optimize(req: OptimizeRequest):
                     },
                 )
 
-        caps = _daily_caps(total_visits, wdays, req.points_per_day, overrides, fill_mode=req.fill_mode or "average")
-        if req.fill_mode == "strict":
+        fill = req.fill_mode or "average"
+        if fill == "average" and not overrides:
+            # Усреднить: авто-баланс сам распределяет равномерно (с ремонтом
+            # баланса, который подтягивает нагрузку к ~среднему значению).
+            caps = None
+        else:
+            caps = _daily_caps(total_visits, wdays, req.points_per_day, overrides, fill_mode=fill)
+        if fill == "strict":
             empty = sum(1 for c in caps if c == 0)
             if empty:
                 base_raw = req.points_per_day if req.points_per_day else (total_visits + n - 1) // n
