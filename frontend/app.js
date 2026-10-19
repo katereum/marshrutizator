@@ -339,7 +339,7 @@ function runStageSequence() {
   return () => clearInterval(timer);
 }
 
-function buildOptimizeBody(confirm, confirmAddress, confirmDuplicates) {
+function buildOptimizeBody(confirm, confirmAddress, confirmDuplicates, fillMode) {
   const period = currentPeriod();
   return JSON.stringify({
     planning_file_id: state.planningFileId,
@@ -352,40 +352,59 @@ function buildOptimizeBody(confirm, confirmAddress, confirmDuplicates) {
     confirm,
     confirm_address: confirmAddress,
     confirm_duplicates: confirmDuplicates,
+    fill_mode: fillMode,
   });
 }
 
-async function runOptimize(confirm, confirmAddress, confirmDuplicates) {
+async function runOptimize(confirm, confirmAddress, confirmDuplicates, fillMode) {
   const resp = await fetch("/api/optimize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: buildOptimizeBody(confirm, confirmAddress, confirmDuplicates),
+    body: buildOptimizeBody(confirm, confirmAddress, confirmDuplicates, fillMode),
   });
   if (!resp.ok) throw new Error(await readErrorMessage(resp));
   return await resp.json();
 }
 
 // Спрашивает подтверждение при расхождении лимитов с реальным числом визитов.
+// Возвращает "average" (усреднить), "strict" (по N в день) или null (отмена).
 function confirmCapacity(data) {
   return new Promise((resolve) => {
     const modal = el("confirm-modal");
     const text = el("confirm-text");
     const okBtn = el("confirm-ok");
+    const strictBtn = el("confirm-strict");
     const cancelBtn = el("confirm-cancel");
     const diff = data.difference;
+    const canStrict = diff < 0 && data.points_per_day;
+
     if (diff > 0) {
-      text.textContent = `В базе ${data.total_visits} визитов, а лимиты вмещают ${data.target_capacity} — лишних ${diff}. Предлагаю смягчить лимиты и распределить равномерно. Продолжить?`;
+      text.textContent =
+        `В базе ${data.total_visits} визитов, а лимиты вмещают ${data.target_capacity} — лишних ${diff}. ` +
+        `Смягчить лимиты и распределить равномерно (~${data.avg_per_day} в день)?`;
+      okBtn.textContent = "Продолжить";
     } else {
-      text.textContent = `В базе ${data.total_visits} визитов, а по лимитам нужно ${data.target_capacity} — не хватает ${-diff}. Предлагаю распределить равномерно (~${data.avg_per_day} в день). Продолжить?`;
+      text.textContent =
+        `В базе ${data.total_visits} визитов, а по лимиту ${data.points_per_day}/день нужно ${data.target_capacity} — ` +
+        `не хватает ${-diff}. Выбери, как заполнить дни.`;
+      okBtn.textContent = `Усреднить (~${data.avg_per_day}/день)`;
     }
+
+    strictBtn.hidden = !canStrict;
+    if (canStrict) {
+      strictBtn.textContent = `По ${data.points_per_day} в день`;
+    }
+
     modal.classList.remove("hidden");
     const cleanup = () => {
       modal.classList.add("hidden");
       okBtn.onclick = null;
+      strictBtn.onclick = null;
       cancelBtn.onclick = null;
     };
-    okBtn.onclick = () => { cleanup(); resolve(true); };
-    cancelBtn.onclick = () => { cleanup(); resolve(false); };
+    okBtn.onclick = () => { cleanup(); resolve("average"); };
+    strictBtn.onclick = () => { cleanup(); resolve("strict"); };
+    cancelBtn.onclick = () => { cleanup(); resolve(null); };
   });
 }
 
@@ -467,15 +486,15 @@ optimizeBtn.addEventListener("click", async () => {
       data = await runOptimize(confirmFlag, confirmAddressFlag, confirmDuplicatesFlag);
     }
     if (data.needs_confirmation) {
-      const ok = await confirmCapacity(data);
-      if (!ok) {
+      const mode = await confirmCapacity(data);
+      if (!mode) {
         stopStages();
         setCarProgress(0);
         setStage("");
         return;
       }
       confirmFlag = true;
-      data = await runOptimize(confirmFlag, confirmAddressFlag, confirmDuplicatesFlag);
+      data = await runOptimize(confirmFlag, confirmAddressFlag, confirmDuplicatesFlag, mode);
     }
     const job_id = data.job_id;
     state.jobId = job_id;
