@@ -129,7 +129,7 @@ def assign_days(
     # Порядок точек: сначала по району (кластеру), затем внутри района — по
     # частоте (якоря) и географии. Так точки одного района идут подряд и
     # попадают в один (или соседние) дни, а не размазываются по всему городу.
-    if coords is not None and point_cluster and all(coords.get(p) for p in points):
+    if coords is not None and point_cluster:
         centroid: dict[int, tuple[float, float, int]] = {}
         for pid, c in point_cluster.items():
             cc = coords.get(pid)
@@ -312,25 +312,60 @@ def assign_days(
         _commit(pid, v, use_cycle, best_d)
         return True
 
-    # 1а. Покрытие (первые визиты) — жадный: куст тянется к своему району,
-    #     соседние районы группируются вокруг (не разлетаются по городу).
-    for pid in order:
-        for v in by_point[pid]:
-            if v.slot_index != 0:
-                continue
-            if not _place(pid, v, freq[pid], False):
-                if dropped is not None:
-                    dropped.append(v.visit_id)
+    if hard_caps:
+        # 1а. Покрытие (слот 0) — ПОСЛЕДОВАТЕЛЬНО по секторам: соседние районы
+        #     идут подряд, день наполняется компактно и не прыгает через город.
+        cur = 0
+        for pid in order:
+            for v in by_point[pid]:
+                if v.slot_index != 0:
+                    continue
+                while cur < n_days and load[cur] >= caps[cur]:
+                    cur += 1
+                if cur >= n_days:
+                    if dropped is not None:
+                        dropped.append(v.visit_id)
+                    continue
+                _commit(pid, v, False, cur)
 
-    # 1б. Цикличность (повторные визиты) — жадный с МИНИМАЛЬНЫМ разрывом и
-    #     предпочтением «своего» куста (повторы района не разлетаются).
-    for pid in order:
-        for v in by_point[pid]:
-            if v.slot_index == 0:
-                continue
-            if not _place(pid, v, freq[pid], True):
-                if dropped is not None:
-                    dropped.append(v.visit_id)
+        # 1б. Повторы (слот 1+) — по уровням, каждый уровень последовательно по
+        #     секторам, с минимальным разрывом от прошлого визита точки. Повторы
+        #     района идут кучно, а не разлетаются по разным дням.
+        for slot_level in range(1, 6):
+            rcur = 0
+            for pid in order:
+                for v in by_point[pid]:
+                    if v.slot_index != slot_level:
+                        continue
+                    f = freq[pid]
+                    gap = _min_gap(f)
+                    chosen = chosen_by_pid.get(pid, set())
+                    prev = max(chosen) if chosen else 0
+                    d = max(rcur, prev + gap)
+                    while d < n_days and (load[d] >= caps[d] or d in chosen):
+                        d += 1
+                    if d >= n_days:
+                        if dropped is not None:
+                            dropped.append(v.visit_id)
+                        continue
+                    _commit(pid, v, True, d)
+                    rcur = d
+    else:
+        # Авто-баланс: жадный (прежнее поведение).
+        for pid in order:
+            for v in by_point[pid]:
+                if v.slot_index != 0:
+                    continue
+                if not _place(pid, v, freq[pid], False):
+                    if dropped is not None:
+                        dropped.append(v.visit_id)
+        for pid in order:
+            for v in by_point[pid]:
+                if v.slot_index == 0:
+                    continue
+                if not _place(pid, v, freq[pid], True):
+                    if dropped is not None:
+                        dropped.append(v.visit_id)
 
     # 2. Ремонт балансировки (разброс нагрузки ≤ 1), минимальный ущерб географии.
     # При явных лимитах на день баланс уже задан лимитами — ремонт не нужен.
