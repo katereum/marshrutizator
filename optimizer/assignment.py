@@ -245,11 +245,45 @@ def assign_days(
     #    б) цикличность: повторные визиты (слот 1+) — по циклу на разные недели.
     chosen_by_pid: dict[str, set[int]] = {}
 
+    def _commit(pid: str, v: Visit, use_cycle: bool, d: int) -> None:
+        chosen = chosen_by_pid.setdefault(pid, set())
+        chosen.add(d)
+        day_points[d].add(pid)
+        day_visits[d].append(v.visit_id)
+        load[d] += 1
+        cc = coords.get(pid) if coords is not None else None
+        if cc is not None:
+            day_slat[d] += cc[0]
+            day_slon[d] += cc[1]
+            day_cnt[d] += 1
+        c = point_cluster.get(pid)
+        if c is not None:
+            if use_cycle:
+                day_clusters2[d].add(c)
+                placed_clusters2.add(c)
+            else:
+                day_clusters[d].add(c)
+                placed_clusters.add(c)
+
+    def _min_gap(f: int) -> int:
+        # Минимальный разрыв между повторными визитами точки (в рабочих днях):
+        # не раньше, чем через неделю (повтор не должен падать на соседнюю
+        # неделю: пятница → понедельник недопустимо). Целевой разрыв ~2 недели
+        # задаёт cycle_penalty.
+        if f < 2:
+            return 0
+        return 5
+
     def _place(pid: str, v: Visit, f: int, use_cycle: bool) -> bool:
         chosen = chosen_by_pid.setdefault(pid, set())
+        lo = 0
+        if use_cycle and chosen and hard_caps:
+            # Повторный визит не раньше, чем через _min_gap дней после прошлого
+            # (только при жёстком лимите; при авто-балансе разрыв даёт cycle_penalty).
+            lo = max(chosen) + _min_gap(f)
         best_d = None
         best_key = None
-        for d in range(n_days):
+        for d in range(lo, n_days):
             if d in chosen or load[d] >= caps[d]:
                 continue
             if use_cycle:
@@ -261,46 +295,42 @@ def assign_days(
                 best_key = key
                 best_d = d
         if best_d is None:
-            if hard_caps:
-                # Жёсткий лимит: визит не помещается — лишний, не планируем.
+            # Сначала — любой свободный день, пусть даже с нарушением разрыва:
+            # визит не теряем, если есть хоть какое-то место.
+            cand = [d for d in range(n_days) if d not in chosen and load[d] < caps[d]]
+            if cand:
+                best_d = min(cand, key=lambda d: load[d])
+            elif hard_caps:
+                # Жёсткий лимит: места нет вообще — лишний, не планируем.
                 return False
-            # Авто-баланс: кладём в наименее загруженный день (ремонт выровняет).
-            best_d = min((d for d in range(n_days) if d not in chosen), key=lambda d: load[d])
-
-        chosen.add(best_d)
-        day_points[best_d].add(pid)
-        day_visits[best_d].append(v.visit_id)
-        load[best_d] += 1
-        cc = coords.get(pid) if coords is not None else None
-        if cc is not None:
-            day_slat[best_d] += cc[0]
-            day_slon[best_d] += cc[1]
-            day_cnt[best_d] += 1
-        c = point_cluster.get(pid)
-        if c is not None:
-            if use_cycle:
-                day_clusters2[best_d].add(c)
-                placed_clusters2.add(c)
             else:
-                day_clusters[best_d].add(c)
-                placed_clusters.add(c)
+                # авто-баланс: кладём в наименее загруженный (ремонт выровняет)
+                cand2 = [d for d in range(n_days) if d not in chosen]
+                if not cand2:
+                    return False
+                best_d = min(cand2, key=lambda d: load[d])
+        _commit(pid, v, use_cycle, best_d)
         return True
 
-    # 1. Географическое размещение в два прохода, собранных в один список:
-    #    а) покрытие: первые визиты (слот 0), ближние районы раньше;
-    #    б) цикличность: повторные визиты (слот 1+) — по циклу на разные недели.
-    # Лимиты жёсткие: если визитов больше, чем вмещают лимиты, лишние НЕ
-    # планируются — срезаем хвост списка (дальние районы и их повторные визиты).
-    ordered: list[tuple[str, Visit, bool]] = []
+    # 1а. Покрытие (первые визиты) — жадный: куст тянется к своему району,
+    #     соседние районы группируются вокруг (не разлетаются по городу).
     for pid in order:
-        ordered += [(pid, v, False) for v in by_point[pid] if v.slot_index == 0]
-    for pid in order:
-        ordered += [(pid, v, True) for v in by_point[pid] if v.slot_index > 0]
+        for v in by_point[pid]:
+            if v.slot_index != 0:
+                continue
+            if not _place(pid, v, freq[pid], False):
+                if dropped is not None:
+                    dropped.append(v.visit_id)
 
-    for pid, v, use_cycle in ordered:
-        if not _place(pid, v, freq[pid], use_cycle):
-            if dropped is not None:
-                dropped.append(v.visit_id)
+    # 1б. Цикличность (повторные визиты) — жадный с МИНИМАЛЬНЫМ разрывом и
+    #     предпочтением «своего» куста (повторы района не разлетаются).
+    for pid in order:
+        for v in by_point[pid]:
+            if v.slot_index == 0:
+                continue
+            if not _place(pid, v, freq[pid], True):
+                if dropped is not None:
+                    dropped.append(v.visit_id)
 
     # 2. Ремонт балансировки (разброс нагрузки ≤ 1), минимальный ущерб географии.
     # При явных лимитах на день баланс уже задан лимитами — ремонт не нужен.
@@ -443,6 +473,9 @@ def tidy_days(
 
     point_coords = {v.point_id: coords[v.point_id] for v in visits if v.point_id in coords}
     visit_pid = {v.visit_id: v.point_id for v in visits}
+    freq: dict[str, int] = {}
+    for v in visits:
+        freq[v.point_id] = freq.get(v.point_id, 0) + 1
 
     for _ in range(3):
         # Центроид каждого дня по геокодированным точкам.
@@ -460,6 +493,10 @@ def tidy_days(
             for vid in list(day_visits[d]):
                 pid = visit_pid[vid]
                 if pid not in point_coords:
+                    continue
+                # Точку с повторными визитами НЕ двигаем: минимальный разрыв
+                # цикличности (≈2 недели) важнее, чем подтягивание к центру дня.
+                if freq.get(pid, 1) > 1:
                     continue
                 c = point_coords[pid]
                 own = haversine_km(c[0], c[1], centroid[d][0], centroid[d][1])
