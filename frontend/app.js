@@ -390,7 +390,7 @@ function confirmCapacity(data) {
         `В базе ${data.total_visits} визитов, а по лимитам (${limitDesc}) помещается ${data.target_capacity} — ` +
         `лишних ${diff}. Смягчить базовый лимит до ${data.softened_base}/день` +
         (ovText ? " (особые дни останутся)" : "") + "?";
-      okBtn.textContent = "Продолжить";
+      okBtn.textContent = "Да, усреднить";
     } else {
       text.textContent =
         `В базе ${data.total_visits} визитов, а по лимитам (${limitDesc}) нужно ${data.target_capacity} — ` +

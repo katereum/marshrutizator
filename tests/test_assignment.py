@@ -75,19 +75,22 @@ class TestAssignment(unittest.TestCase):
         day_visits, load = assign_days(visits, 4, dist_fn=dist, coords=coords)
         self.assertLessEqual(max(load) - min(load), 1)
 
-        # Каждый день однороден по району.
-        for d in day_visits:
-            ids = {v.rsplit("#", 1)[0] for v in d}
-            if ids:
-                self.assertTrue(
-                    all(x.startswith("w") for x in ids) or all(x.startswith("e") for x in ids),
-                    f"день смешал районы: {ids}",
-                )
-
-        # Частотность: w0 и e0 должны быть ровно на двух разных днях.
+        # Частотность: w0 и e0 — на двух разных днях (покрытие + цикличность).
         for anchor in ("w0", "e0"):
-            days = [d for d in range(4) if any(v.startswith(anchor + "#") for v in day_visits[d])]
+            days = sorted(d for d in range(4) if any(v.startswith(anchor + "#") for v in day_visits[d]))
             self.assertEqual(len(days), 2, anchor)
+
+        # Покрытие (слот 0) держит районы вместе: запад раньше, восток позже.
+        w_cov = {d for d in range(4) for v in day_visits[d] if v.startswith("w") and v.endswith("#0")}
+        e_cov = {d for d in range(4) for v in day_visits[d] if v.startswith("e") and v.endswith("#0")}
+        self.assertTrue(w_cov and e_cov, "нет покрытия")
+        self.assertLessEqual(max(w_cov), min(e_cov),
+                             f"покрытие смешалось: запад={w_cov}, восток={e_cov}")
+
+        # Цикличность (слот 1) — на другую неделю (в конец месяца), не рядом с покрытием.
+        cycle = {d for d in range(4) for v in day_visits[d] if v.endswith("#1")}
+        self.assertTrue(cycle, "цикличность не найдена")
+        self.assertGreaterEqual(min(cycle), 3, f"цикличность не в конце: {cycle}")
 
     def test_same_coordinates_share_day(self):
         coords = {
