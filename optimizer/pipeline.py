@@ -109,7 +109,17 @@ def build_route(
         if p.latitude is not None and p.longitude is not None:
             coords[p.id] = (p.latitude, p.longitude)
     dropped: list[str] = []
-    day_visits, load = assign_days(visits, n_days, dist_fn=node_distance, coords=coords, caps=caps, home=home, dropped=dropped)
+    day_visits, load = assign_days(
+        visits,
+        n_days,
+        dist_fn=node_distance,
+        coords=coords,
+        caps=caps,
+        home=home,
+        dropped=dropped,
+        home_by_weekday=home_by_weekday,
+        weekdays=[d.weekday() for d in days],
+    )
     if caps is not None and dropped:
         extra = len(dropped)
         warnings.append(

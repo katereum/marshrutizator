@@ -156,6 +156,29 @@ class TestAssignment(unittest.TestCase):
         self.assertEqual(sum(load), 6)
         self.assertTrue(all(l <= c for l, c in zip(load, [2, 2, 2])))
 
+    def test_per_day_home_override_starts_from_override(self):
+        # День с переопределением старта должен собрать куст рядом со СВОИМ
+        # адресом, а не с базовым домом.
+        south = [f"s{i}" for i in range(3)]
+        north = [f"n{i}" for i in range(3)]
+        coords = {}
+        for i, p in enumerate(south):
+            coords[p] = (55.68, 37.50 + i * 0.001)
+        for i, p in enumerate(north):
+            coords[p] = (55.86, 37.49 + i * 0.001)
+        visits = [Visit(p, 0, 0 if p in south else 1) for p in south + north]
+        home = (55.86, 37.49)               # базовый дом — север
+        home_by_weekday = {0: (55.68, 37.50)}  # понедельник (день 0) — юг
+        day_visits, _ = assign_days(
+            visits, 3, coords=coords, caps=[3, 3, 3],
+            home=home, home_by_weekday=home_by_weekday, weekdays=[0, 1, 2],
+        )
+        d0 = {v.rsplit("#", 1)[0] for v in day_visits[0]}
+        d1 = {v.rsplit("#", 1)[0] for v in day_visits[1]}
+        # Понедельник берёт южный куст (переопределение), а не северный (дом).
+        self.assertEqual(d0, set(south))
+        self.assertEqual(d1, set(north))
+
 
 if __name__ == "__main__":
     unittest.main()

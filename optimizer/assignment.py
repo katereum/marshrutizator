@@ -81,6 +81,8 @@ def assign_days(
     caps: list[int] | None = None,
     home: tuple[float, float] | None = None,
     dropped: list[str] | None = None,
+    home_by_weekday: dict[int, tuple[float, float]] | None = None,
+    weekdays: list[int] | None = None,
 ) -> tuple[list[list[str]], list[int]]:
     """Распределяет визиты по дням. Возвращает (day_visits, load).
 
@@ -129,6 +131,8 @@ def assign_days(
     # Порядок точек: сначала по району (кластеру), затем внутри района — по
     # частоте (якоря) и географии. Так точки одного района идут подряд и
     # попадают в один (или соседние) дни, а не размазываются по всему городу.
+    center: dict[int, tuple[float, float]] = {}
+    cluster_rank: dict[int, int] = {}
     if coords is not None and point_cluster:
         centroid: dict[int, tuple[float, float, int]] = {}
         for pid, c in point_cluster.items():
@@ -313,20 +317,77 @@ def assign_days(
         return True
 
     if hard_caps:
-        # 1а. Покрытие (слот 0) — ПОСЛЕДОВАТЕЛЬНО по секторам: соседние районы
-        #     идут подряд, день наполняется компактно и не прыгает через город.
-        cur = 0
-        for pid in order:
-            for v in by_point[pid]:
-                if v.slot_index != 0:
-                    continue
-                while cur < n_days and load[cur] >= caps[cur]:
-                    cur += 1
-                if cur >= n_days:
-                    if dropped is not None:
-                        dropped.append(v.visit_id)
-                    continue
-                _commit(pid, v, False, cur)
+        # Адрес старта каждого дня: переопределение (если задано для этого дня
+        # недели) или базовый дом. Если день начинается не с дома, а с другого
+        # адреса — собираем кусты рядом с ЭТИМ адресом, а не с базового дома.
+        day_homes: list[tuple[float, float] | None] = []
+        for d in range(n_days):
+            h = home
+            if home_by_weekday is not None and weekdays is not None:
+                h = home_by_weekday.get(weekdays[d], home)
+            day_homes.append(h)
+        # Есть ли хоть один день с ДРУГИМ стартом (переопределением), отличным
+        # от базового дома. Если нет — обычная последовательная раскладка по
+        # секторам (она компактнее и быстрее).
+        use_per_day = home_by_weekday is not None and weekdays is not None and any(
+            h is not None and h != home for h in day_homes
+        )
+
+        if not use_per_day:
+            # 1а. Покрытие (слот 0) — ПОСЛЕДОВАТЕЛЬНО по секторам: соседние
+            #     районы идут подряд, день наполняется компактно, без прыжков.
+            cur = 0
+            for pid in order:
+                for v in by_point[pid]:
+                    if v.slot_index != 0:
+                        continue
+                    while cur < n_days and load[cur] >= caps[cur]:
+                        cur += 1
+                    if cur >= n_days:
+                        if dropped is not None:
+                            dropped.append(v.visit_id)
+                        continue
+                    _commit(pid, v, False, cur)
+        else:
+            def _home_dist_to_pid(h, pid):
+                if h is None or coords is None:
+                    return 0.0
+                c = point_cluster.get(pid)
+                cc = center.get(c) if c is not None else None
+                if cc is not None:
+                    return haversine_km(h[0], h[1], cc[0], cc[1])
+                p = coords.get(pid)
+                if p is None:
+                    return float("inf")
+                return haversine_km(h[0], h[1], p[0], p[1])
+
+            # 1а. Покрытие (слот 0): каждый день берёт НЕЗАНЯТЫЕ кусты ближе
+            #     всего к своему стартовому адресу (дом или переопределение).
+            #     Так день с другим стартом собирает маршрут кустом рядом с этим
+            #     адресом и идёт к дому, а не едет через весь город к «чужим»
+            #     точкам.
+            covered: set[str] = set()
+            for d in range(n_days):
+                h = day_homes[d]
+                cand = [pid for pid in order if pid not in covered]
+                if h is not None and coords is not None and point_cluster:
+                    cand.sort(
+                        key=lambda pid: (
+                            _home_dist_to_pid(h, pid),
+                            cluster_rank.get(point_cluster.get(pid, -1), 1 << 30),
+                        )
+                    )
+                for pid in cand:
+                    if load[d] >= caps[d]:
+                        break
+                    for v in by_point[pid]:
+                        if v.slot_index != 0:
+                            continue
+                        if load[d] >= caps[d]:
+                            break
+                        _commit(pid, v, False, d)
+                        covered.add(pid)
+                        break
 
         # 1б. Повторы (слот 1+) — по уровням, каждый уровень последовательно по
         #     секторам, с минимальным разрывом от прошлого визита точки. Уровни

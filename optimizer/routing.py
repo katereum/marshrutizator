@@ -69,14 +69,11 @@ def _nn_2opt(
     def prio(v: str) -> float:
         return priority.get(_pid(v), 0.0) if priority is not None else 0.0
 
-    # 1. Жадный ближайший сосед (от дальней точки к дому), с мягким приоритетом.
-    #    День заканчивается дома, поэтому начинаем с самой ДАЛЬНЕЙ от дома точки
-    #    и «возвращаемся» к дому: дальние точки — в начале (по пути от старта),
-    #    ближние к дому — в конце, чтобы в конце дня не ехать далеко домой.
+    # 1. Жадный ближайший сосед от адреса СТАРТА дня (дом или переопределение).
+    #    День идёт «от старта к дому»: начинаем с точки ближайшей к стартовому
+    #    адресу и собираем куст рядом с ним, затем постепенно уходим к дому.
     remaining = set(visit_ids)
-    if end_home_dist is not None:
-        start = max(remaining, key=end_home_dist)
-    elif home_dist is not None:
+    if home_dist is not None:
         if use_priority:
             start = min(remaining, key=lambda v: home_dist(v) - priority_weight * prio(v))
         else:
