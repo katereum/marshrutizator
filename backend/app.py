@@ -284,41 +284,23 @@ def _build_route_geometries(
     return geometries
 
 
-def _daily_caps(total_visits: int, wdays, points_per_day: int | None, overrides: dict[int, int], fill_mode: str = "average") -> list[int]:
-    """Дневные лимиты: оверрайды по дням недели — жёсткий потолок.
+def _daily_caps(total_visits: int, wdays, points_per_day: int | None, overrides: dict[int, int]) -> list[int]:
+    """Дневные лимиты СТРОГО по заданным — без смягчения.
 
-    Явный лимит на конкретный день (например, вторник = 12) никогда не
-    поднимается при смягчении. При переборе визитов смягчается только базовый
-    лимит (`points_per_day`), чтобы суммарная ёмкость вместила все визиты.
-
-    `fill_mode`:
-    - "average" (по умолчанию) — усреднить: базовый лимит подбирается так,
-      чтобы визиты распределились равномерно по всем дням;
-    - "strict" — строго по лимиту в день: базовый лимит не меняется, а дни
-      после того, как база закончилась, получают лимит 0 (пустые).
+    Базовый лимит (`points_per_day`) и оверрайды по дням недели используются
+    как есть. Если визитов меньше, чем вмещают лимиты, последние дни получают
+    0 (пустые — «недобор в конце»). Если больше — лимиты не меняются, лишние
+    визиты «выливаются» сверх лимита (обрабатывается в assign_days).
     """
     n = len(wdays)
     base = points_per_day if points_per_day is not None else (total_visits + n - 1) // n
-    override_slots = sum(overrides.get(d.weekday(), 0) for d in wdays)
-    num_base = sum(1 for d in wdays if d.weekday() not in overrides)
-    if num_base > 0:
-        remaining = total_visits - override_slots
-        if fill_mode == "average":
-            base = max(1, (remaining + num_base - 1) // num_base)
-        elif remaining > num_base * base:
-            # strict, но визиты не влезают в заданный лимит — поднимаем,
-            # иначе часть визитов некуда положить.
-            base = (remaining + num_base - 1) // num_base
     caps = [overrides.get(d.weekday(), base) for d in wdays]
-    if fill_mode == "strict":
-        # Последние дни — пустые: как только суммарная ёмкость покрывает все
-        # визиты, остальные дни получают лимит 0.
-        acc = 0
-        for i in range(n):
-            if acc >= total_visits:
-                caps[i] = 0
-            else:
-                acc += caps[i]
+    acc = 0
+    for i in range(n):
+        if acc >= total_visits:
+            caps[i] = 0
+        else:
+            acc += caps[i]
     return caps
 
 
@@ -450,48 +432,21 @@ def optimize(req: OptimizeRequest):
         overrides = req.points_per_day_overrides or {}
         total_visits = sum(min(p.frequency, n) for p in points)
 
-        if not req.confirm:
-            base_raw = req.points_per_day if req.points_per_day is not None else (total_visits + n - 1) // n
-            target = sum(overrides.get(d.weekday(), base_raw) for d in wdays)
-            if total_visits != target:
-                override_slots = sum(overrides.get(d.weekday(), 0) for d in wdays)
-                num_base = sum(1 for d in wdays if d.weekday() not in overrides)
-                softened_base = max(1, (total_visits - override_slots + num_base - 1) // num_base) if num_base else 0
-                full_days = total_visits // base_raw if base_raw else 0
-                leftover = total_visits % base_raw if base_raw else 0
-                return JSONResponse(
-                    status_code=200,
-                    content={
-                        "needs_confirmation": True,
-                        "total_visits": total_visits,
-                        "target_capacity": target,
-                        "difference": total_visits - target,
-                        "avg_per_day": round(total_visits / n, 1),
-                        "points_per_day": req.points_per_day,
-                        "overrides": overrides,
-                        "softened_base": softened_base,
-                        "full_days": full_days,
-                        "leftover": leftover,
-                    },
-                )
-
-        fill = req.fill_mode or "average"
-        if fill == "average" and not overrides:
-            # Усреднить: авто-баланс сам распределяет равномерно (с ремонтом
-            # баланса, который подтягивает нагрузку к ~среднему значению).
-            caps = None
-        else:
-            caps = _daily_caps(total_visits, wdays, req.points_per_day, overrides, fill_mode=fill)
-        if fill == "strict":
-            empty = sum(1 for c in caps if c == 0)
-            if empty:
-                base_raw = req.points_per_day if req.points_per_day else (total_visits + n - 1) // n
-                caps_warning = (
-                    f"Не хватило базы: визитов {total_visits}, а по лимиту {base_raw}/день "
-                    f"нужно больше — последние {empty} дн. пустые."
-                )
-            else:
-                caps_warning = None
+        # Лимиты — строго как задал пользователь, без смягчения.
+        caps = _daily_caps(total_visits, wdays, req.points_per_day, overrides)
+        base_raw = req.points_per_day if req.points_per_day else (total_visits + n - 1) // n
+        empty = sum(1 for c in caps if c == 0)
+        if empty:
+            caps_warning = (
+                f"Не хватило базы: визитов {total_visits}, а по лимиту {base_raw}/день "
+                f"нужно больше — последние {empty} дн. пустые."
+            )
+        elif sum(caps) < total_visits:
+            extra = total_visits - sum(caps)
+            caps_warning = (
+                f"Визитов {total_visits} больше, чем вмещают лимиты (по {base_raw}/день) — "
+                f"{extra} лишних вышли сверх лимита."
+            )
         else:
             caps_warning = None
     results = build_routes(

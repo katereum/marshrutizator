@@ -339,7 +339,7 @@ function runStageSequence() {
   return () => clearInterval(timer);
 }
 
-function buildOptimizeBody(confirm, confirmAddress, confirmDuplicates, fillMode) {
+function buildOptimizeBody(confirmAddress, confirmDuplicates) {
   const period = currentPeriod();
   return JSON.stringify({
     planning_file_id: state.planningFileId,
@@ -349,71 +349,19 @@ function buildOptimizeBody(confirm, confirmAddress, confirmDuplicates, fillMode)
     home_address_overrides: buildHomeOverrides(),
     focus: el("focus").value,
     ...buildCapacity(),
-    confirm,
     confirm_address: confirmAddress,
     confirm_duplicates: confirmDuplicates,
-    fill_mode: fillMode,
   });
 }
 
-async function runOptimize(confirm, confirmAddress, confirmDuplicates, fillMode) {
+async function runOptimize(confirmAddress, confirmDuplicates) {
   const resp = await fetch("/api/optimize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: buildOptimizeBody(confirm, confirmAddress, confirmDuplicates, fillMode),
+    body: buildOptimizeBody(confirmAddress, confirmDuplicates),
   });
   if (!resp.ok) throw new Error(await readErrorMessage(resp));
   return await resp.json();
-}
-
-// Спрашивает подтверждение при расхождении лимитов с реальным числом визитов.
-// Возвращает "average" (усреднить), "strict" (по N в день) или null (отмена).
-function confirmCapacity(data) {
-  return new Promise((resolve) => {
-    const modal = el("confirm-modal");
-    const text = el("confirm-text");
-    const okBtn = el("confirm-ok");
-    const strictBtn = el("confirm-strict");
-    const cancelBtn = el("confirm-cancel");
-    const diff = data.difference;
-    const canStrict = diff < 0 && data.points_per_day;
-
-    const WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
-    const overrides = data.overrides || {};
-    const ovText = Object.keys(overrides)
-      .map((w) => `${WD[w]}: ${overrides[w]}`)
-      .join(", ");
-    const limitDesc = `${data.points_per_day}/день${ovText ? `, ${ovText}` : ""}`;
-
-    if (diff > 0) {
-      text.textContent =
-        `В базе ${data.total_visits} визитов, а по лимитам (${limitDesc}) помещается ${data.target_capacity} — ` +
-        `лишних ${diff}. Смягчить базовый лимит до ${data.softened_base}/день` +
-        (ovText ? " (особые дни останутся)" : "") + "?";
-      okBtn.textContent = "Да, усреднить";
-    } else {
-      text.textContent =
-        `В базе ${data.total_visits} визитов, а по лимитам (${limitDesc}) нужно ${data.target_capacity} — ` +
-        `не хватает ${-diff}. Выбери, как заполнить.`;
-      okBtn.textContent = `Усреднить (~${data.avg_per_day}/день)`;
-    }
-
-    strictBtn.hidden = !canStrict;
-    if (canStrict) {
-      strictBtn.textContent = `По ${data.points_per_day} в день`;
-    }
-
-    modal.classList.remove("hidden");
-    const cleanup = () => {
-      modal.classList.add("hidden");
-      okBtn.onclick = null;
-      strictBtn.onclick = null;
-      cancelBtn.onclick = null;
-    };
-    okBtn.onclick = () => { cleanup(); resolve("average"); };
-    strictBtn.onclick = () => { cleanup(); resolve("strict"); };
-    cancelBtn.onclick = () => { cleanup(); resolve(null); };
-  });
 }
 
 // Спрашивает подтверждение, когда есть дубли кода (точка учтётся один раз).
@@ -467,10 +415,9 @@ optimizeBtn.addEventListener("click", async () => {
   mapSection.classList.add("hidden");
   const stopStages = runStageSequence();
   try {
-    let confirmFlag = false;
     let confirmAddressFlag = false;
     let confirmDuplicatesFlag = false;
-    let data = await runOptimize(confirmFlag, confirmAddressFlag, confirmDuplicatesFlag);
+    let data = await runOptimize(confirmAddressFlag, confirmDuplicatesFlag);
     if (data.needs_duplicate_confirmation) {
       const ok = await confirmDuplicates(data);
       if (!ok) {
@@ -480,7 +427,7 @@ optimizeBtn.addEventListener("click", async () => {
         return;
       }
       confirmDuplicatesFlag = true;
-      data = await runOptimize(confirmFlag, confirmAddressFlag, confirmDuplicatesFlag);
+      data = await runOptimize(confirmAddressFlag, confirmDuplicatesFlag);
     }
     if (data.needs_address_confirmation) {
       const ok = await confirmAddress(data);
@@ -491,18 +438,7 @@ optimizeBtn.addEventListener("click", async () => {
         return;
       }
       confirmAddressFlag = true;
-      data = await runOptimize(confirmFlag, confirmAddressFlag, confirmDuplicatesFlag);
-    }
-    if (data.needs_confirmation) {
-      const mode = await confirmCapacity(data);
-      if (!mode) {
-        stopStages();
-        setCarProgress(0);
-        setStage("");
-        return;
-      }
-      confirmFlag = true;
-      data = await runOptimize(confirmFlag, confirmAddressFlag, confirmDuplicatesFlag, mode);
+      data = await runOptimize(confirmAddressFlag, confirmDuplicatesFlag);
     }
     const job_id = data.job_id;
     state.jobId = job_id;

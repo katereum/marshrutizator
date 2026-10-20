@@ -132,8 +132,9 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(r2.json()["status"], "COMPLETED")
         self.assertTrue(any("прямым" in w for w in r2.json()["stats"][0]["warnings"]))
 
-    def test_optimize_capacity_mismatch_needs_confirmation(self):
-        # 3 визита, но лимит 2/день на 22 рабочих дня = 44 слота — не сходится.
+    def test_optimize_capacity_mismatch_no_confirmation(self):
+        # 3 визита, но лимит 2/день: строится сразу (без модалки), с предупреждением
+        # о нехватке базы в результате (лимиты не смягчаются).
         planning = make_xlsx(
             PLANNING_COLUMNS,
             [planning_row("A001", 1), planning_row("A002", 1), planning_row("A003", 1)],
@@ -141,13 +142,8 @@ class TestAPI(unittest.TestCase):
         r = self.client.post("/api/upload/planning", files={"file": ("planning.xlsx", planning, XLSX_MIME)})
         pid = r.json()["file_id"]
 
-        template = make_xlsx(RESULT_COLUMNS, [["" for _ in RESULT_COLUMNS]])
-        r = self.client.post("/api/upload/route-template", files={"file": ("template.xlsx", template, XLSX_MIME)})
-        tid = r.json()["file_id"]
-
         body = {
             "planning_file_id": pid,
-            "route_template_file_id": tid,
             "period_start": "2026-09-01",
             "period_end": "2026-09-30",
             "points_per_day": 2,
@@ -158,22 +154,13 @@ class TestAPI(unittest.TestCase):
             mock_route_geo.route.return_value = None
             r = self.client.post("/api/optimize", json=body)
 
-        self.assertEqual(r.status_code, 200)
-        data = r.json()
-        self.assertTrue(data["needs_confirmation"])
-        self.assertEqual(data["total_visits"], 3)
-        self.assertLess(data["difference"], 0)  # не хватает
-
-        # confirm=true → оптимизация проходит.
-        body["confirm"] = True
-        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road, patch("backend.app.route_geometry") as mock_route_geo:
-            mock_geo.geocode.return_value = (55.75, 37.61)
-            mock_road.matrix.return_value = [[0.0] * 3 for _ in range(3)]
-            mock_route_geo.route.return_value = None
-            r = self.client.post("/api/optimize", json=body)
-
+        # Без модалки: сразу оптимизация.
         self.assertEqual(r.status_code, 202)
-        self.assertIn("job_id", r.json())
+        jid = r.json()["job_id"]
+
+        r2 = self.client.get(f"/api/result/{jid}")
+        self.assertEqual(r2.json()["status"], "COMPLETED")
+        self.assertTrue(any("Не хватило базы" in w for w in r2.json()["stats"][0]["warnings"]))
 
     def test_optimize_address_confirmation_flow(self):
         # Одна точка с полным адресом, одна — без города («неопределённая»).

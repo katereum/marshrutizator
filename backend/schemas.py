@@ -24,10 +24,6 @@ class OptimizeRequest(BaseModel):
     # Подтверждение после предупреждения о расхождении лимитов с реальным
     # числом визитов (см. /api/optimize → needs_confirmation).
     confirm: bool = False
-    # Как заполнять дни при расхождении лимитов (см. needs_confirmation):
-    # "average" — распределить равномерно (усреднить); "strict" — строго по
-    # лимиту в день, последние дни оставить пустыми (не хватило базы).
-    fill_mode: Literal["average", "strict"] | None = None
     # Подтверждение после предупреждения о точках без полного адреса
     # (см. /api/optimize → needs_address_confirmation). При true такие точки
     # идут в «неопределённые» и не маршрутизируются.
