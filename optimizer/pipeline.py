@@ -109,14 +109,14 @@ def build_route(
         if p.latitude is not None and p.longitude is not None:
             coords[p.id] = (p.latitude, p.longitude)
     if caps is not None and sum(caps) < len(visits):
-        floor = (len(visits) + n_days - 1) // n_days
+        extra = len(visits) - sum(caps)
         warnings.append(
             f"Лимит точек в день не вмещает все визиты: {len(visits)} визитов при "
-            f"суммарной ёмкости {sum(caps)}. Лимиты смягчены до минимум {floor} в день."
+            f"суммарной ёмкости {sum(caps)} — {extra} лишних не запланированы."
         )
     day_visits, load = assign_days(visits, n_days, dist_fn=node_distance, coords=coords, caps=caps, home=home)
     # Точки одного места (одинаковые координаты) — в один день, а не вразнобой.
-    day_visits, load = consolidate_locations(day_visits, load, visits, coords)
+    day_visits, load = consolidate_locations(day_visits, load, visits, coords, caps=caps)
     # «Выбросы» (точка из другого конца города) — подтягиваем к своему району.
     day_visits, load = tidy_days(day_visits, load, visits, coords, caps)
 

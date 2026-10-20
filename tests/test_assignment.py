@@ -149,12 +149,12 @@ class TestAssignment(unittest.TestCase):
         self.assertEqual(sum(new_load), 4)
         self.assertTrue(any(len(d) == 4 for d in new_day))
 
-    def test_caps_infeasible_softens(self):
+    def test_caps_infeasible_drops_excess(self):
         visits = [Visit(f"p{i}", 0, 0) for i in range(10)]
-        # Сумма лимитов 6 < 10 визитов — лимиты смягчаются, а не падаем.
+        # Сумма лимитов 6 < 10 визитов — лишние 4 НЕ планируются, лимит жёсткий.
         day_visits, load = assign_days(visits, 3, caps=[2, 2, 2])
-        self.assertEqual(sum(load), 10)
-        self.assertTrue(all(l <= 4 for l in load))  # потолок ceil(10/3)=4
+        self.assertEqual(sum(load), 6)
+        self.assertTrue(all(l <= c for l, c in zip(load, [2, 2, 2])))
 
 
 if __name__ == "__main__":

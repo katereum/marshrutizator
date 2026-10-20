@@ -445,7 +445,7 @@ def optimize(req: OptimizeRequest):
             extra = total_visits - sum(caps)
             caps_warning = (
                 f"Визитов {total_visits} больше, чем вмещают лимиты (по {base_raw}/день) — "
-                f"{extra} лишних вышли сверх лимита."
+                f"{extra} лишних не запланированы."
             )
         else:
             caps_warning = None

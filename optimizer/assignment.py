@@ -261,16 +261,22 @@ def assign_days(
         if medoid[best_d] is None:
             medoid[best_d] = pid
 
-    # а) покрытие (первые визиты)
+    # 1. Географическое размещение в два прохода, собранных в один список:
+    #    а) покрытие: первые визиты (слот 0), ближние районы раньше;
+    #    б) цикличность: повторные визиты (слот 1+) — по циклу на разные недели.
+    # Лимиты жёсткие: если визитов больше, чем вмещают лимиты, лишние НЕ
+    # планируются — срезаем хвост списка (дальние районы и их повторные визиты).
+    ordered: list[tuple[str, Visit, bool]] = []
     for pid in order:
-        for v in by_point[pid]:
-            if v.slot_index == 0:
-                _place(pid, v, freq[pid], use_cycle=False)
-    # б) цикличность (повторные визиты)
+        ordered += [(pid, v, False) for v in by_point[pid] if v.slot_index == 0]
     for pid in order:
-        for v in by_point[pid]:
-            if v.slot_index > 0:
-                _place(pid, v, freq[pid], use_cycle=True)
+        ordered += [(pid, v, True) for v in by_point[pid] if v.slot_index > 0]
+    capacity = sum(caps)
+    if len(ordered) > capacity:
+        ordered = ordered[:capacity]
+
+    for pid, v, use_cycle in ordered:
+        _place(pid, v, freq[pid], use_cycle)
 
     # 2. Ремонт балансировки (разброс нагрузки ≤ 1), минимальный ущерб географии.
     # При явных лимитах на день баланс уже задан лимитами — ремонт не нужен.
@@ -330,14 +336,15 @@ def consolidate_locations(
     load: list[int],
     visits: list[Visit],
     coords: dict[str, tuple[float, float]],
+    caps: list[int] | None = None,
 ) -> tuple[list[list[str]], list[int]]:
     """Собирает точки одного места (одинаковые координаты) в один день.
 
     Обратная связь с полей: если в одном месте (ТЦ, бизнес-центр) много точек,
     удобнее объехать их все за один день, чем дробить на несколько дней и
-    возвращаться. Запускается ПОСЛЕ assign_days (включая балансировку) — это
-    финальное слово; ради «кучности» одного места дневной лимит может быть
-    превышен.
+    возвращаться. Запускается ПОСЛЕ assign_days (включая балансировку). Если
+    заданы дневные лимиты (caps), они соблюдаются жёстко: в заполненный день
+    точки не перекладываются.
     """
     if not coords:
         return day_visits, load
@@ -346,6 +353,10 @@ def consolidate_locations(
     for d, vids in enumerate(day_visits):
         for vid in vids:
             visit_day[vid] = d
+
+    # Лишние визиты (не влезшие в лимит) уже отброшены в assign_days — работаем
+    # только с размещёнными, иначе ниже KeyError на отброшенном visit_id.
+    visits = [v for v in visits if v.visit_id in visit_day]
 
     point_visits: dict[str, list[Visit]] = {}
     for v in visits:
@@ -372,6 +383,9 @@ def consolidate_locations(
             for vid in vids:
                 old = visit_day[vid]
                 if old == target:
+                    continue
+                # Лимит жёсткий: не перекладываем в уже заполненный день (17/12 и т.п.).
+                if caps is not None and load[target] >= caps[target]:
                     continue
                 pid = vid.rsplit("#", 1)[0]
                 # Не ставим одну точку дважды в один день (разные слоты точки).
@@ -427,7 +441,7 @@ def tidy_days(
                 own = haversine_km(c[0], c[1], centroid[d][0], centroid[d][1])
                 best = None
                 for d2 in range(n_days):
-                    if d2 == d or d2 not in centroid or load[d2] >= cap[d2] + 1:
+                    if d2 == d or d2 not in centroid or load[d2] >= cap[d2]:
                         continue
                     if pid in day_pids[d2]:
                         continue
