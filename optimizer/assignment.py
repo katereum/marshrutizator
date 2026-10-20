@@ -138,16 +138,29 @@ def assign_days(
             lat, lon, n = centroid.get(c, (0.0, 0.0, 0))
             centroid[c] = (lat + cc[0], lon + cc[1], n + 1)
         center = {c: (v[0] / v[2], v[1] / v[2]) for c, v in centroid.items()}
-        if home is not None:
-            # От дома наружу: ближние районы обслуживаются раньше (недели 1–2),
-            # дальние — позже. Так маршрут идёт «спиралью» от дома, а не кругами
-            # по всему городу.
-            ranked = sorted(
-                center.keys(),
-                key=lambda c: haversine_km(home[0], home[1], center[c][0], center[c][1]),
-            )
+        # Цепочка ближайших соседей по центроидам кустов: соседние районы идут
+        # подряд, поэтому день не «прыгает» через весь город (спринты по шоссе),
+        # а держится в одном секторе. От дома — начинаем с ближайшего куста и
+        # «ползём» змейкой; без дома — с самого северного.
+        keys = list(center.keys())
+        if keys:
+            if home is not None:
+                start = min(keys, key=lambda c: haversine_km(home[0], home[1], center[c][0], center[c][1]))
+            else:
+                start = min(keys, key=lambda c: center[c])
+            ranked = [start]
+            remaining = set(keys) - {start}
+            cur = start
+            while remaining:
+                nxt = min(
+                    remaining,
+                    key=lambda c: haversine_km(center[cur][0], center[cur][1], center[c][0], center[c][1]),
+                )
+                ranked.append(nxt)
+                remaining.remove(nxt)
+                cur = nxt
         else:
-            ranked = sorted(center.keys(), key=lambda c: center[c])
+            ranked = []
         cluster_rank = {c: i for i, c in enumerate(ranked)}
 
         def _key(p):
