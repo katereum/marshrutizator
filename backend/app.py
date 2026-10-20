@@ -441,12 +441,6 @@ def optimize(req: OptimizeRequest):
                 f"Не хватило базы: визитов {total_visits}, а по лимиту {base_raw}/день "
                 f"нужно больше — последние {empty} дн. пустые."
             )
-        elif sum(caps) < total_visits:
-            extra = total_visits - sum(caps)
-            caps_warning = (
-                f"Визитов {total_visits} больше, чем вмещают лимиты (по {base_raw}/день) — "
-                f"{extra} лишних не запланированы."
-            )
         else:
             caps_warning = None
     results = build_routes(

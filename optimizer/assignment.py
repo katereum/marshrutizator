@@ -105,8 +105,7 @@ def assign_days(
         if len(caps) != n_days:
             raise ValueError(f"caps: ожидалось {n_days} значений, получено {len(caps)}")
         # Лимиты — жёсткий потолок, НЕ смягчаем. Если визитов больше, чем
-        # вмещают лимиты, лишние «выливаются» сверх (fallback ниже кладёт их
-        # в наименее загруженный день).
+        # вмещают лимиты, лишние не планируются (срезаем хвост списка ordered).
         hard_caps = True
 
     by_point: dict[str, list[Visit]] = {}
@@ -171,6 +170,11 @@ def assign_days(
     day_visits: list[list[str]] = [[] for _ in range(n_days)]
     load = [0] * n_days
     medoid: list[str | None] = [None] * n_days
+    # Центроид дня (сумма координат размещённых точек) — чтобы новый куст шёл в
+    # день с ближайшим ЦЕНТРОМ, а не к первой точке (иначе день «расползается»).
+    day_slat = [0.0] * n_days
+    day_slon = [0.0] * n_days
+    day_cnt = [0] * n_days
 
     # Кластеры по дням — чтобы точки одного района шли в один день.
     day_clusters: list[set[int]] = [set() for _ in range(n_days)]
@@ -207,13 +211,14 @@ def assign_days(
         return _cluster_penalty(pid, d, day_clusters2, placed_clusters2)
 
     def day_cost(pid: str, d: int) -> float:
-        if dist_fn is None:
-            return 0.0
-        m = medoid[d]
-        if m is None:
+        if day_cnt[d] == 0:
             return seed_km
-        v = dist_fn(pid, m)
-        return seed_km if v is None else v
+        cc = coords.get(pid) if coords is not None else None
+        if cc is None:
+            return seed_km
+        clat = day_slat[d] / day_cnt[d]
+        clon = day_slon[d] / day_cnt[d]
+        return haversine_km(clat, clon, cc[0], cc[1])
 
     def cycle_penalty(pid: str, slot: int, f: int, d: int) -> float:
         if f < 2:
@@ -226,7 +231,7 @@ def assign_days(
     #    б) цикличность: повторные визиты (слот 1+) — по циклу на разные недели.
     chosen_by_pid: dict[str, set[int]] = {}
 
-    def _place(pid: str, v: Visit, f: int, use_cycle: bool) -> None:
+    def _place(pid: str, v: Visit, f: int, use_cycle: bool) -> bool:
         chosen = chosen_by_pid.setdefault(pid, set())
         best_d = None
         best_key = None
@@ -242,14 +247,21 @@ def assign_days(
                 best_key = key
                 best_d = d
         if best_d is None:
-            # Все непустые дни заполнены или уже заняты точкой — берём
-            # наименее загруженный свободный день.
+            if hard_caps:
+                # Жёсткий лимит: визит не помещается — лишний, не планируем.
+                return False
+            # Авто-баланс: кладём в наименее загруженный день (ремонт выровняет).
             best_d = min((d for d in range(n_days) if d not in chosen), key=lambda d: load[d])
 
         chosen.add(best_d)
         day_points[best_d].add(pid)
         day_visits[best_d].append(v.visit_id)
         load[best_d] += 1
+        cc = coords.get(pid) if coords is not None else None
+        if cc is not None:
+            day_slat[best_d] += cc[0]
+            day_slon[best_d] += cc[1]
+            day_cnt[best_d] += 1
         c = point_cluster.get(pid)
         if c is not None:
             if use_cycle:
@@ -258,8 +270,7 @@ def assign_days(
             else:
                 day_clusters[best_d].add(c)
                 placed_clusters.add(c)
-        if medoid[best_d] is None:
-            medoid[best_d] = pid
+        return True
 
     # 1. Географическое размещение в два прохода, собранных в один список:
     #    а) покрытие: первые визиты (слот 0), ближние районы раньше;
@@ -271,9 +282,6 @@ def assign_days(
         ordered += [(pid, v, False) for v in by_point[pid] if v.slot_index == 0]
     for pid in order:
         ordered += [(pid, v, True) for v in by_point[pid] if v.slot_index > 0]
-    capacity = sum(caps)
-    if len(ordered) > capacity:
-        ordered = ordered[:capacity]
 
     for pid, v, use_cycle in ordered:
         _place(pid, v, freq[pid], use_cycle)
