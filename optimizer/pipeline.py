@@ -108,12 +108,14 @@ def build_route(
     for p in points:
         if p.latitude is not None and p.longitude is not None:
             coords[p.id] = (p.latitude, p.longitude)
-    day_visits, load = assign_days(visits, n_days, dist_fn=node_distance, coords=coords, caps=caps, home=home)
-    if caps is not None and sum(load) < len(visits):
-        extra = len(visits) - sum(load)
+    dropped: list[str] = []
+    day_visits, load = assign_days(visits, n_days, dist_fn=node_distance, coords=coords, caps=caps, home=home, dropped=dropped)
+    if caps is not None and dropped:
+        extra = len(dropped)
         warnings.append(
             f"Лимит точек в день не вмещает все визиты: {len(visits)} визитов при "
-            f"суммарной ёмкости {sum(caps)} — {extra} лишних не запланированы."
+            f"суммарной ёмкости {sum(caps)} — {extra} лишних не запланированы "
+            f"(см. лист «Не запланировано»)."
         )
     # Точки одного места (одинаковые координаты) — в один день, а не вразнобой.
     day_visits, load = consolidate_locations(day_visits, load, visits, coords, caps=caps)
@@ -177,9 +179,16 @@ def build_route(
         warnings=warnings,
         focus=focus,
         priority=priority,
+        unplanned=dropped,
     )
 
-    expected = {p.id: min(p.frequency, n_days) for p in points}
+    # Лишние визиты (не влезшие в лимит) не считаем «потерянными» — они осознанно
+    # не запланированы и лежат в result.unplanned.
+    dropped_by_pid: dict[str, int] = {}
+    for d in dropped:
+        pid = d.rsplit("#", 1)[0]
+        dropped_by_pid[pid] = dropped_by_pid.get(pid, 0) + 1
+    expected = {p.id: min(p.frequency, n_days) - dropped_by_pid.get(p.id, 0) for p in points}
     violations = validate_route(result, expected)
     result.stats = RouteStats(
         total_points=len(points),

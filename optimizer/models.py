@@ -82,3 +82,4 @@ class RouteResult:
     warnings: list[str] = field(default_factory=list)
     focus: str = "economy"                       # акцент маршрута
     priority: dict = field(default_factory=dict)  # point_id -> приоритет 0..1
+    unplanned: list[str] = field(default_factory=list)  # visit_id'ы, не влезшие в лимит (point_id#slot)

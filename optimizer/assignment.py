@@ -80,6 +80,7 @@ def assign_days(
     coords: dict[str, tuple[float, float]] | None = None,
     caps: list[int] | None = None,
     home: tuple[float, float] | None = None,
+    dropped: list[str] | None = None,
 ) -> tuple[list[list[str]], list[int]]:
     """Распределяет визиты по дням. Возвращает (day_visits, load).
 
@@ -284,7 +285,9 @@ def assign_days(
         ordered += [(pid, v, True) for v in by_point[pid] if v.slot_index > 0]
 
     for pid, v, use_cycle in ordered:
-        _place(pid, v, freq[pid], use_cycle)
+        if not _place(pid, v, freq[pid], use_cycle):
+            if dropped is not None:
+                dropped.append(v.visit_id)
 
     # 2. Ремонт балансировки (разброс нагрузки ≤ 1), минимальный ущерб географии.
     # При явных лимитах на день баланс уже задан лимитами — ремонт не нужен.

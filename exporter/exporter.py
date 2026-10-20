@@ -219,6 +219,61 @@ def _add_incomplete_sheet(wb, incomplete_points) -> None:
             ws.cell(row=row, column=c, value=value)
 
 
+def _add_unplanned_sheet(wb, result: RouteResult, points_by_id: dict[str, Point]) -> None:
+    """Лист «Не запланировано»: визиты, не влезшие в лимит точек в день.
+
+    Показывает, какой именно визит точки не запланирован — повторный (цикличность)
+    или первый — и сколько из требуемой цикличности удалось разместить.
+    """
+    if not result.unplanned:
+        return
+    ws = wb.create_sheet("Не запланировано")
+    cols: list[str] = []
+    for vid in result.unplanned:
+        p = points_by_id.get(vid.rsplit("#", 1)[0])
+        if p is not None and p.original:
+            # Убираем сгенерированные колонки маршрута (дата/№ п/п) — у
+            # незапланированного визита нет даты.
+            cols = [
+                str(c).strip() for c in p.original.keys()
+                if str(c).strip() and str(c).strip() not in ("№ п/п", "Дата визита", "День недели")
+            ]
+            break
+    cols.append("Причина")
+    header_row = 1
+    for c, name in enumerate(cols, start=1):
+        cell = ws.cell(row=header_row, column=c, value=name)
+        cell.font = Font(bold=True)
+    for i, vid in enumerate(result.unplanned):
+        pid, slot_s = vid.rsplit("#", 1)
+        p = points_by_id.get(pid)
+        if p is None:
+            continue
+        row = header_row + 1 + i
+        orig = p.original or {}
+        for c, name in enumerate(cols[:-1], start=1):
+            value = ""
+            for k, v in orig.items():
+                if str(k).strip().lower() == name.lower():
+                    value = "" if v is None else v
+                    break
+            ws.cell(row=row, column=c, value=value)
+        slot = int(slot_s)
+        placed = sum(
+            1 for vid2 in result.unplanned
+            if vid2.rsplit("#", 1)[0] == pid
+        )
+        placed_total = p.frequency - placed
+        if slot == 0:
+            reason = "первый визит не влез в лимит точек в день"
+        else:
+            reason = (
+                f"повторный визит (цикличность) не влез в лимит — "
+                f"запланировано {placed_total} из {p.frequency}"
+            )
+        ws.cell(row=row, column=len(cols), value=reason)
+
+
 def _export_route_from_scratch(result: RouteResult, points_by_id: dict[str, Point], incomplete_points=None) -> bytes:
     """Создаёт маршрутный лист с нуля: колонки — из базы планирования, а не фиксированные."""
     wb = Workbook()
@@ -234,6 +289,7 @@ def _export_route_from_scratch(result: RouteResult, points_by_id: dict[str, Poin
     _fill_route_rows(ws, col_index, header_row + 1, None, result, points_by_id)
     _add_summary_sheet(wb, result, points_by_id)
     _add_incomplete_sheet(wb, incomplete_points)
+    _add_unplanned_sheet(wb, result, points_by_id)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
@@ -270,6 +326,7 @@ def export_route(template: BinaryIO | None, result: RouteResult, points_by_id: d
 
     _add_summary_sheet(wb, result, points_by_id)
     _add_incomplete_sheet(wb, incomplete_points)
+    _add_unplanned_sheet(wb, result, points_by_id)
 
     out = io.BytesIO()
     wb.save(out)
