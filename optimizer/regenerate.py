@@ -11,8 +11,6 @@
 """
 from __future__ import annotations
 
-import random
-
 from .distance import haversine_km
 from .models import Point, RouteResult
 from .pipeline import _home_context, _node_distance, _pid, _total_km
@@ -144,8 +142,18 @@ def swap_day(
     coords.sort(key=dist_from_center)  # ближние -> дальние
     victims = [v for v, _, _ in coords][::-1]  # дальние -> ближние (худшие первыми)
 
-    rng = random.Random(f"{result.job_id}|{day_idx}|{variant}")
-    rng.shuffle(in_cand)
+    # Кандидаты на вход: ближние к центру дня первыми (куст остаётся компактным);
+    # вариант сдвигает окно, чтобы каждое нажатие давало немного другой набор.
+    def _cdist(v):
+        p = point_by_id.get(_pid(v))
+        if p is None or not p.has_coords:
+            return float("inf")
+        return haversine_km(clat, clon, p.latitude, p.longitude)
+
+    in_cand.sort(key=_cdist)
+    off = variant % max(1, len(in_cand))
+    in_cand = in_cand[off:] + in_cand[:off]
+
     k = max(1, min(len(cur) // 4, len(in_cand), len(victims)))
     if k < 1:
         return ds
