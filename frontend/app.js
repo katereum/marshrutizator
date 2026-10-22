@@ -12,6 +12,7 @@ const state = {
   planningFile: null,
   planningFileId: null,
   jobId: null,
+  routeEmployee: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -21,6 +22,8 @@ const statusBox = el("status");
 const stageEl = el("stage");
 const resultBox = el("result");
 const mapSection = el("map-section");
+const daysSection = el("days-section");
+const daysList = el("days-list");
 
 // Прогресс обработки для машинки (0..1); реальную реализацию ставит блок с машинкой.
 let setCarProgress = function () {};
@@ -450,25 +453,11 @@ optimizeBtn.addEventListener("click", async () => {
     resultBox.classList.remove("hidden");
     el("download-link").href = `/api/download/${job_id}`;
     renderMap(job_id);
+    renderDays(job_id);
 
     fetch(`/api/result/${job_id}`)
       .then((r) => r.json())
-      .then((data) => {
-        const stats = data.stats && data.stats[0];
-        const meta = el("result-meta");
-        const parts = [];
-        if (stats && typeof stats.total_km === "number") {
-          parts.push(`Километраж по маршруту: ~${stats.total_km} км`);
-        }
-        if (stats && Array.isArray(stats.warnings) && stats.warnings.length) {
-          parts.push("Внимание: " + stats.warnings[0]);
-        }
-        if (parts.length) {
-          meta.textContent = parts.join(". ");
-          meta.style.whiteSpace = "pre-line";
-          meta.classList.remove("hidden");
-        }
-      })
+      .then((data) => renderMeta(data.stats && data.stats[0]))
       .catch(() => {});
   } catch (err) {
     stopStages();
@@ -477,6 +466,159 @@ optimizeBtn.addEventListener("click", async () => {
     setStatus(err.message, true);
   }
 });
+
+// ── Дни маршрута: согласование и переделка ─────────────────────────────
+let dayVariants = {}; // дата -> сколько раз нажимали «Переделать»
+
+let lastStats = null;
+function renderMeta(stats) {
+  if (stats) lastStats = Object.assign({}, lastStats, stats);
+  const meta = el("result-meta");
+  if (!meta || !lastStats) return;
+  const parts = [];
+  if (typeof lastStats.total_km === "number") {
+    parts.push(`Километраж по маршруту: ~${lastStats.total_km} км`);
+  }
+  if (Array.isArray(lastStats.warnings) && lastStats.warnings.length) {
+    parts.push("Внимание: " + lastStats.warnings[0]);
+  }
+  if (parts.length) {
+    meta.textContent = parts.join(". ");
+    meta.style.whiteSpace = "pre-line";
+    meta.classList.remove("hidden");
+  }
+}
+
+function pluralPoints(n) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return "точка";
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return "точки";
+  return "точек";
+}
+
+async function renderDays(jobId) {
+  if (!daysSection || !daysList) return;
+  let data;
+  try {
+    const resp = await fetch(`/api/result/${jobId}/days`);
+    if (!resp.ok) return;
+    data = await resp.json();
+  } catch (e) {
+    return;
+  }
+  const routes = data.routes || [];
+  const route = routes[0]; // одна база = один торговый представитель (обычный случай)
+  if (!route) return;
+  state.routeEmployee = route.employee;
+  daysSection.classList.remove("hidden");
+  daysList.innerHTML = "";
+  route.days.forEach((day) => daysList.appendChild(buildDayRow(day)));
+  renderMeta({ total_km: route.total_km });
+}
+
+function buildDayRow(day) {
+  const row = document.createElement("div");
+  row.className = "day-row" + (day.locked ? " locked" : "");
+  row.dataset.date = day.date;
+
+  const main = document.createElement("div");
+  main.className = "day-main";
+
+  const title = document.createElement("div");
+  title.className = "day-title";
+  const dateEl = document.createElement("span");
+  dateEl.className = "day-date";
+  dateEl.textContent = formatDayLabel(day.date, day.weekday);
+  const countEl = document.createElement("span");
+  countEl.className = "day-count";
+  countEl.textContent = `${day.count} ${pluralPoints(day.count)}`;
+  title.appendChild(dateEl);
+  title.appendChild(countEl);
+  if (day.locked) {
+    const stateEl = document.createElement("span");
+    stateEl.className = "day-state";
+    stateEl.textContent = "✓ согласован";
+    title.appendChild(stateEl);
+  }
+  main.appendChild(title);
+
+  const points = document.createElement("p");
+  points.className = "day-points";
+  const labels = day.visits
+    .map((v) => v.metro || v.street || v.code)
+    .filter(Boolean);
+  points.textContent = labels.join(" · ") || "—";
+  main.appendChild(points);
+  row.appendChild(main);
+
+  const actions = document.createElement("div");
+  actions.className = "day-actions";
+
+  if (day.locked) {
+    const unlockBtn = document.createElement("button");
+    unlockBtn.className = "day-btn";
+    unlockBtn.textContent = "Разблокировать";
+    unlockBtn.onclick = () => unlockDay(day.date);
+    actions.appendChild(unlockBtn);
+  } else {
+    const approveBtn = document.createElement("button");
+    approveBtn.className = "day-btn approve";
+    approveBtn.textContent = "Согласовать";
+    approveBtn.onclick = () => lockDay(day.date);
+    actions.appendChild(approveBtn);
+
+    const redoBtn = document.createElement("button");
+    redoBtn.className = "day-btn redo";
+    redoBtn.textContent = "Переделать";
+    redoBtn.onclick = () => regenerateDay(day.date);
+    actions.appendChild(redoBtn);
+  }
+  row.appendChild(actions);
+  return row;
+}
+
+async function postDayAction(action, date) {
+  const resp = await fetch(`/api/result/${state.jobId}/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ employee: state.routeEmployee, date }),
+  });
+  if (!resp.ok) {
+    setStatus(await readErrorMessage(resp), true);
+    return false;
+  }
+  return true;
+}
+
+async function lockDay(date) {
+  if (await postDayAction("lock", date)) {
+    setStatus("День согласован — он больше не меняется");
+    await renderDays(state.jobId);
+  }
+}
+
+async function unlockDay(date) {
+  if (await postDayAction("unlock", date)) {
+    setStatus("День разблокирован");
+    await renderDays(state.jobId);
+  }
+}
+
+async function regenerateDay(date) {
+  dayVariants[date] = (dayVariants[date] || 0) + 1;
+  const resp = await fetch(`/api/result/${state.jobId}/regenerate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ employee: state.routeEmployee, date, variant: dayVariants[date], swap: true }),
+  });
+  if (!resp.ok) {
+    setStatus(await readErrorMessage(resp), true);
+    return;
+  }
+  setStatus("День переделан — проверь новый вариант");
+  await renderDays(state.jobId);
+  renderMap(state.jobId);
+}
 
 // Машинка с лисом ездит по дорожке под кнопкой (прогресс) + тонкий прогресс-бар.
 (function () {

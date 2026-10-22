@@ -594,6 +594,63 @@ section.panel { padding: 28px; }
 
 .btn-secondary:hover { background: #f3f4f6; }
 
+/* ── Дни маршрута: согласование и переделка ─────────────── */
+.days-head h2 { margin: 0 0 6px; }
+.days-hint { margin: 0 0 18px; font-size: 14px; color: var(--text-muted); }
+
+.days-list { display: flex; flex-direction: column; gap: 10px; }
+
+.day-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  transition: border-color 0.15s, background 0.15s;
+}
+.day-row.locked { border-color: #16a34a; background: #f0fdf4; }
+
+.day-main { flex: 1 1 auto; min-width: 0; }
+.day-title { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.day-date { font-weight: 700; font-size: 15px; }
+.day-count { font-size: 13px; color: var(--text-muted); }
+.day-points {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.day-state {
+  font-size: 12px;
+  font-weight: 600;
+  color: #16a34a;
+  margin-left: 2px;
+}
+
+.day-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+.day-btn {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: #fff;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.day-btn:hover { background: #f3f4f6; }
+.day-btn.approve:hover { border-color: #16a34a; color: #16a34a; }
+.day-btn.redo:hover { border-color: var(--accent); color: var(--accent); }
+.day-btn.redo { color: var(--accent); border-color: var(--accent); }
+.day-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
 /* ── Адаптив ───────────────────────────────────────────── */
 @media (max-width: 680px) {
   .container { padding: 28px 16px 56px; }
