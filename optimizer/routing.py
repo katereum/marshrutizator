@@ -19,6 +19,7 @@ def order_day(
     end_home_dist=None,
     priority: dict[str, float] | None = None,
     priority_weight: float = 0.0,
+    variant: int = 0,
 ) -> list[str]:
     """Возвращает visit_ids в порядке посещения.
 
@@ -28,12 +29,13 @@ def order_day(
     стартовый, т.е. круг дом→точки→дом). `priority` (point_id -> 0..1) и
     `priority_weight` (в «км») мягко вытаскивают приоритетные точки раньше:
     жадный сосед выбирает `dist - priority_weight * priority`, а 2-opt остаётся
-    чисто дорожным.
+    чисто дорожным. `variant` > 0 меняет стартовую точку жадного прохода —
+    другой порядок объезда того же набора точек (для кнопки «переделать день»).
     """
     if len(visit_ids) <= 2:
         return list(visit_ids)
     if all(points_by_visit[v].has_coords for v in visit_ids):
-        return _nn_2opt(visit_ids, points_by_visit, home, dist, home_dist, end_home_dist, priority, priority_weight)
+        return _nn_2opt(visit_ids, points_by_visit, home, dist, home_dist, end_home_dist, priority, priority_weight, variant)
     return sorted(
         visit_ids,
         key=lambda v: (points_by_visit[v].normalized_address, v),
@@ -53,6 +55,7 @@ def _nn_2opt(
     end_home_dist=None,
     priority: dict[str, float] | None = None,
     priority_weight: float = 0.0,
+    variant: int = 0,
 ) -> list[str]:
     if dist is None:
         def dist(a: str, b: str) -> float:
@@ -82,6 +85,21 @@ def _nn_2opt(
         start = max(remaining, key=prio)
     else:
         start = visit_ids[0]
+
+    # Вариант переделки: меняем стартовую точку жадного прохода. variant 1 —
+    # самый дальний от старта (обратный проход), 2+ — перебор стартовых точек
+    # по кругу. Каждое нажатие «переделать» даёт другой порядок того же набора.
+    if variant and home_dist is not None:
+        by_home = sorted(remaining, key=home_dist)
+        if by_home:
+            if variant == 1:
+                start = by_home[-1]
+            else:
+                start = by_home[(variant - 1) % len(by_home)]
+    elif variant and use_priority:
+        by_prio = sorted(remaining, key=prio, reverse=True)
+        if by_prio:
+            start = by_prio[(variant - 1) % len(by_prio)]
 
     order = [start]
     remaining.remove(start)

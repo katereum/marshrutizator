@@ -80,5 +80,23 @@ class TestRouting(unittest.TestCase):
         self.assertEqual(with_prio[0], "c#0")  # приоритетная вышла вперёд
 
 
+    def test_order_variant_changes_direction(self):
+        # variant 0 — ближайшая к дому; variant 1 — самая дальняя (обратный проход).
+        pts = {
+            f"p{i}#0": Point(id=f"p{i}", trade_rep_code="T", frequency=1,
+                             latitude=55.75 + i * 0.01, longitude=37.61)
+            for i in range(6)
+        }
+        home = (55.75, 37.61)  # ближе всего к p0, дальше всего — p5
+        ids = list(pts.keys())
+        base = order_day(ids, pts, home)
+        alt = order_day(ids, pts, home, variant=1)
+        self.assertEqual(set(base), set(ids))
+        self.assertEqual(set(alt), set(ids))
+        self.assertEqual(base[0], "p0#0")     # ближайшая
+        self.assertEqual(alt[0], "p5#0")      # самая дальняя
+        self.assertNotEqual(base, alt)
+
+
 if __name__ == "__main__":
     unittest.main()
