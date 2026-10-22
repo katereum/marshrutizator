@@ -34,3 +34,19 @@ class OptimizeRequest(BaseModel):
     # Мягкие целевые ограничения (R3); ядро MVP балансирует к вычисленной цели.
     min_points_per_day: int | None = None
     max_points_per_day: int | None = None
+
+
+class DayAction(BaseModel):
+    """Зафиксировать/разблокировать день маршрута."""
+
+    employee: str
+    date: date
+
+
+class RegenerateRequest(BaseModel):
+    """Переделать день маршрута (другой порядок и/или состав)."""
+
+    employee: str
+    date: date
+    variant: int = 0
+    swap: bool = True

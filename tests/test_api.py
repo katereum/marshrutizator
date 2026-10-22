@@ -93,6 +93,65 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.headers["content-type"], XLSX_MIME)
 
+    def test_days_lock_regenerate(self):
+        planning = make_xlsx(
+            PLANNING_COLUMNS,
+            [planning_row("A001", 1), planning_row("A002", 1), planning_row("A003", 1)],
+        )
+        r = self.client.post(
+            "/api/upload/planning",
+            files={"file": ("planning.xlsx", planning, XLSX_MIME)},
+        )
+        pid = r.json()["file_id"]
+
+        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road, patch("backend.app.route_geometry") as mock_route_geo:
+            mock_geo.geocode.return_value = (55.75, 37.61)
+            mock_road.matrix.return_value = [[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]
+            mock_route_geo.route.return_value = None
+            r = self.client.post(
+                "/api/optimize",
+                json={
+                    "planning_file_id": pid,
+                    "period_start": "2026-09-01",
+                    "period_end": "2026-09-30",
+                },
+            )
+        jid = r.json()["job_id"]
+
+        r = self.client.get(f"/api/result/{jid}/days")
+        self.assertEqual(r.status_code, 200)
+        routes = r.json()["routes"]
+        self.assertEqual(len(routes), 1)
+        emp = routes[0]["employee"]
+        first = routes[0]["days"][0]
+        self.assertFalse(first["locked"])
+
+        # Зафиксировать день.
+        r = self.client.post(f"/api/result/{jid}/lock", json={"employee": emp, "date": first["date"]})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(f"{emp}|{first['date']}", r.json()["locked"])
+
+        # Переделать зафиксированный день нельзя.
+        r = self.client.post(
+            f"/api/result/{jid}/regenerate",
+            json={"employee": emp, "date": first["date"], "variant": 1, "swap": False},
+        )
+        self.assertEqual(r.status_code, 409)
+
+        # Разблокировать — переделать.
+        self.client.post(f"/api/result/{jid}/unlock", json={"employee": emp, "date": first["date"]})
+        r = self.client.post(
+            f"/api/result/{jid}/regenerate",
+            json={"employee": emp, "date": first["date"], "variant": 1, "swap": False},
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["date"], first["date"])
+
+        # Скачивание пересобирается из черновика.
+        r = self.client.get(f"/api/download/{jid}")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers["content-type"], XLSX_MIME)
+
     def test_optimize_falls_back_without_road_matrix(self):
         planning = make_xlsx(
             PLANNING_COLUMNS,

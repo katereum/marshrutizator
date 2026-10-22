@@ -20,6 +20,7 @@ from geocoder.offline import OfflineGeocoder
 from geocoder.yandex import YandexGeocoder
 from optimizer.models import HOME_ID, Point
 from optimizer.pipeline import build_routes
+from optimizer.regenerate import regenerate_day
 from optimizer.calendar import working_days
 from router import (
     ChainRoadDistance,
@@ -44,7 +45,7 @@ from parser import (
 )
 
 from .jobstore import JobStore
-from .schemas import OptimizeRequest
+from .schemas import DayAction, OptimizeRequest, RegenerateRequest
 
 try:
     from dotenv import load_dotenv
@@ -477,7 +478,24 @@ def optimize(req: OptimizeRequest):
     geometries = _build_route_geometries(results, points_by_id, home, home_by_weekday)
     geojson = build_geojson(results, points_by_id, home=home, home_by_weekday=home_by_weekday, geometries=geometries)
 
-    store.update(job_id, status="COMPLETED", results=results, xlsx_files=files, geojson=geojson)
+    store.update(
+        job_id,
+        status="COMPLETED",
+        results=results,
+        xlsx_files=files,
+        geojson=geojson,
+        # Входы черновика — для переделки дней и пересборки скачивания.
+        points_by_id=points_by_id,
+        incomplete_points=incomplete_points,
+        template=template,
+        home=home,
+        home_by_weekday=home_by_weekday,
+        road_matrix=road_matrix,
+        focus=req.focus,
+        caps=caps,
+        work_on_weekends=req.work_on_weekends,
+        locked=set(),
+    )
     return {"job_id": job_id}
 
 
@@ -506,6 +524,120 @@ def result(job_id: str):
     return payload
 
 
+def _find_result_and_day(job, employee: str, date_iso: str):
+    results = job.get("results") or []
+    for r in results:
+        if r.trade_rep_code != employee:
+            continue
+        for i, ds in enumerate(r.days):
+            if ds.date.isoformat() == date_iso:
+                return r, i
+    return None, None
+
+
+def _rebuild_geojson(job):
+    return build_geojson(
+        job["results"],
+        job.get("points_by_id") or {},
+        home=job.get("home"),
+        home_by_weekday=job.get("home_by_weekday"),
+        geometries=_build_route_geometries(
+            job["results"], job.get("points_by_id") or {}, job.get("home"), job.get("home_by_weekday")
+        ),
+    )
+
+
+@app.get("/api/result/{job_id}/days")
+def result_days(job_id: str):
+    job = store.get(job_id)
+    if job is None or job.get("results") is None:
+        raise HTTPException(status_code=404, detail="Результат не найден")
+    locked = set(job.get("locked") or set())
+    points_by_id = job.get("points_by_id") or {}
+    routes = []
+    for r in job["results"]:
+        days = []
+        for ds in r.days:
+            visits = []
+            for v in ds.ordered_visits:
+                pid = v.rsplit("#", 1)[0]
+                p = points_by_id.get(pid)
+                visits.append({
+                    "visit": v,
+                    "code": pid,
+                    "metro": p.metro if p else "",
+                    "street": p.street if p else "",
+                })
+            days.append({
+                "date": ds.date.isoformat(),
+                "weekday": ds.weekday,
+                "count": len(ds.ordered_visits),
+                "locked": f"{r.trade_rep_code}|{ds.date.isoformat()}" in locked,
+                "visits": visits,
+            })
+        routes.append({
+            "employee": r.trade_rep_code,
+            "days": days,
+            "total_km": round(r.stats.total_km, 1),
+            "unplanned": r.unplanned,
+        })
+    return {"routes": routes}
+
+
+@app.post("/api/result/{job_id}/lock")
+def lock_day(job_id: str, body: DayAction):
+    job = store.get(job_id)
+    if job is None or job.get("results") is None:
+        raise HTTPException(status_code=404, detail="Результат не найден")
+    locked = set(job.get("locked") or set())
+    locked.add(f"{body.employee}|{body.date.isoformat()}")
+    store.update(job_id, locked=locked)
+    return {"locked": sorted(locked)}
+
+
+@app.post("/api/result/{job_id}/unlock")
+def unlock_day(job_id: str, body: DayAction):
+    job = store.get(job_id)
+    if job is None or job.get("results") is None:
+        raise HTTPException(status_code=404, detail="Результат не найден")
+    locked = set(job.get("locked") or set())
+    locked.discard(f"{body.employee}|{body.date.isoformat()}")
+    store.update(job_id, locked=locked)
+    return {"locked": sorted(locked)}
+
+
+@app.post("/api/result/{job_id}/regenerate")
+def regenerate(job_id: str, body: RegenerateRequest):
+    job = store.get(job_id)
+    if job is None or job.get("results") is None:
+        raise HTTPException(status_code=404, detail="Результат не найден")
+    key = f"{body.employee}|{body.date.isoformat()}"
+    if key in (job.get("locked") or set()):
+        raise HTTPException(status_code=409, detail="День зафиксирован — разблокируйте, чтобы переделать")
+    r, i = _find_result_and_day(job, body.employee, body.date.isoformat())
+    if r is None or i is None:
+        raise HTTPException(status_code=404, detail="День не найден")
+    points = list((job.get("points_by_id") or {}).values())
+    regenerate_day(
+        r, i, body.variant,
+        points=points,
+        home=job.get("home"),
+        home_by_weekday=job.get("home_by_weekday"),
+        road_matrix=job.get("road_matrix"),
+        focus=job.get("focus") or "economy",
+        work_on_weekends=job.get("work_on_weekends", False),
+        swap=body.swap,
+    )
+    store.update(job_id, results=job["results"], geojson=_rebuild_geojson(job))
+    ds = r.days[i]
+    return {
+        "date": ds.date.isoformat(),
+        "count": len(ds.ordered_visits),
+        "visits": ds.ordered_visits,
+        "total_km": round(r.stats.total_km, 1),
+    }
+
+
 @app.get("/api/result/{job_id}/geojson")
 def result_geojson(job_id: str):
     job = store.get(job_id)
@@ -517,9 +649,19 @@ def result_geojson(job_id: str):
 @app.get("/api/download/{job_id}")
 def download(job_id: str):
     job = store.get(job_id)
-    if job is None or job.get("xlsx_files") is None:
+    if job is None or job.get("results") is None:
         raise HTTPException(status_code=404, detail="Файл не найден")
-    files = job["xlsx_files"]
+    # Пересобираем из ТЕКУЩЕГО черновика (после согласований/переделок).
+    template = job.get("template")
+    template_io = io.BytesIO(template) if template else None
+    points_by_id = job.get("points_by_id") or {}
+    incomplete_points = job.get("incomplete_points") or []
+    files = []
+    for r in job["results"]:
+        inc = [p for p in incomplete_points if p.trade_rep_code == r.trade_rep_code]
+        files.append(
+            (f"{r.trade_rep_code or 'route'}.xlsx", export_route(template_io, r, points_by_id, inc))
+        )
     if len(files) == 1:
         name, content = files[0]
         return Response(

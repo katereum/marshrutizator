@@ -75,6 +75,35 @@ def _total_km(schedules: list[DaySchedule], node_distance, day_home_dist, end_ho
     return total
 
 
+def _home_context(points, home, home_by_weekday, node_distance, days):
+    """Замкнутые метрики дома (старт/возврат) — общие для построения и переделки."""
+    point_by_id = {p.id: p for p in points}
+
+    def day_home(d: int):
+        if home_by_weekday is None:
+            return home
+        return home_by_weekday.get(days[d].weekday(), home)
+
+    def day_home_dist(idx: int, pid: str) -> float:
+        h = day_home(idx)
+        if h is None:
+            return 0.0
+        if home is not None and h == home:
+            return node_distance(HOME_ID, pid)
+        p = point_by_id.get(pid)
+        if p is None or not p.has_coords:
+            return 0.0
+        return haversine_km(h[0], h[1], p.latitude, p.longitude)
+
+    def base_home_dist(pid: str) -> float:
+        """Расстояние от точки до БАЗОВОГО дома (возврат всегда туда)."""
+        if home is None:
+            return 0.0
+        return node_distance(HOME_ID, pid)
+
+    return day_home, day_home_dist, base_home_dist
+
+
 def build_route(
     points: list[Point],
     period_start: date,
@@ -138,27 +167,9 @@ def build_route(
     visit_dist = lambda a, b: node_distance(_pid(a), _pid(b))
 
     # Дом конкретного дня: переопределение по дню недели, иначе базовый дом.
-    def day_home(d: int):
-        if home_by_weekday is None:
-            return home
-        return home_by_weekday.get(days[d].weekday(), home)
-
-    def day_home_dist(idx: int, pid: str) -> float:
-        h = day_home(idx)
-        if h is None:
-            return 0.0
-        if home is not None and h == home:
-            return node_distance(HOME_ID, pid)
-        p = point_by_id.get(pid)
-        if p is None or not p.has_coords:
-            return 0.0
-        return haversine_km(h[0], h[1], p.latitude, p.longitude)
-
-    def base_home_dist(pid: str) -> float:
-        """Расстояние от точки до БАЗОВОГО дома (возврат всегда туда)."""
-        if home is None:
-            return 0.0
-        return node_distance(HOME_ID, pid)
+    day_home, day_home_dist, base_home_dist = _home_context(
+        points, home, home_by_weekday, node_distance, days
+    )
 
     # Мягкий приоритет: вес λ = половина типичного расстояния между соседними точками,
     # чтобы приоритет переставлял точки внутри района, не ломая географию.
