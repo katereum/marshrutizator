@@ -413,6 +413,31 @@ function confirmAddress(data) {
   });
 }
 
+// Показывает, что именно изменилось после «Переделать» (какие станции ушли/пришли).
+function showDayChanged(data) {
+  const modal = el("day-changed-modal");
+  const text = el("day-changed-text");
+  const okBtn = el("day-changed-ok");
+  if (!modal || !text) return;
+  const parts = [];
+  if (Array.isArray(data.added_metros) && data.added_metros.length) {
+    parts.push("Добавил: " + data.added_metros.join(", "));
+  }
+  if (Array.isArray(data.removed_metros) && data.removed_metros.length) {
+    parts.push("Убрал: " + data.removed_metros.join(", "));
+  }
+  if (!parts.length) {
+    parts.push("Порядок объезда обновлён (станции остались те же).");
+  }
+  if (Array.isArray(data.metros) && data.metros.length) {
+    parts.push("Теперь в дне: " + data.metros.join(", "));
+  }
+  text.textContent = parts.join("\n");
+  text.style.whiteSpace = "pre-line";
+  modal.classList.remove("hidden");
+  okBtn.onclick = () => modal.classList.add("hidden");
+}
+
 optimizeBtn.addEventListener("click", async () => {
   resultBox.classList.add("hidden");
   mapSection.classList.add("hidden");
@@ -615,9 +640,11 @@ async function regenerateDay(date) {
     setStatus(await readErrorMessage(resp), true);
     return;
   }
+  const data = await resp.json();
   setStatus("День переделан — проверь новый вариант");
   await renderDays(state.jobId);
   renderMap(state.jobId);
+  showDayChanged(data);
 }
 
 // Машинка с лисом ездит по дорожке под кнопкой (прогресс) + тонкий прогресс-бар.

@@ -618,6 +618,15 @@ def regenerate(job_id: str, body: RegenerateRequest):
     if r is None or i is None:
         raise HTTPException(status_code=404, detail="День не найден")
     points = list((job.get("points_by_id") or {}).values())
+    points_by_id = job.get("points_by_id") or {}
+
+    def _metro_of(v):
+        p = points_by_id.get(v.rsplit("#", 1)[0])
+        return p.metro if p else ""
+
+    before = list(r.days[i].ordered_visits)
+    before_metros = sorted({_metro_of(v) for v in before if _metro_of(v)})
+
     regenerate_day(
         r, i, body.variant,
         points=points,
@@ -627,14 +636,21 @@ def regenerate(job_id: str, body: RegenerateRequest):
         focus=job.get("focus") or "economy",
         work_on_weekends=job.get("work_on_weekends", False),
         swap=body.swap,
+        locked_dates=job.get("locked") or set(),
     )
     store.update(job_id, results=job["results"], geojson=_rebuild_geojson(job))
     ds = r.days[i]
+    after_metros = sorted({_metro_of(v) for v in ds.ordered_visits if _metro_of(v)})
+    removed = [m for m in before_metros if m not in after_metros]
+    added = [m for m in after_metros if m not in before_metros]
     return {
         "date": ds.date.isoformat(),
         "count": len(ds.ordered_visits),
         "visits": ds.ordered_visits,
         "total_km": round(r.stats.total_km, 1),
+        "metros": after_metros,
+        "removed_metros": removed,
+        "added_metros": added,
     }
 
 

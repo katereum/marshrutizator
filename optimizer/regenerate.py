@@ -2,8 +2,11 @@
 
 Две операции поверх готового `RouteResult`:
 - `reorder_day` — меняет ПОРЯДОК точек дня (вариант через seed-старт);
-- `swap_day` — меняет СОСТАВ дня, обмениваясь визитами с пулом
-  «Не запланировано» (точки возвращаются в маршрут, «худшие» уходят в пул).
+- `recluster_day` — пересобирает день в ОДИН компактный куст: точки дня и
+  соседних незафиксированных дней перераспределяются по близости к «якорю»
+  каждого дня (усечённый центроид = доминирующий район). Убирает «круги» —
+  день перестаёт смешивать разные концы города. Общее число точек окна не
+  меняется (лишние уходят в пул «Не запланировано»).
 
 Обе используют те же метрики, что и `build_route` (через `_home_context` и
 `_node_distance` из pipeline), поэтому дорожные расстояния, стартовые адреса и
@@ -52,6 +55,21 @@ def _points_by_visit(visit_ids, point_by_id):
     return {v: point_by_id[_pid(v)] for v in visit_ids if _pid(v) in point_by_id}
 
 
+def _trimmed_anchor(coords, frac=0.7):
+    """Усечённый центроид: итеративно отбрасываем дальние точки-выбросы, чтобы
+    получить центр ДОМИНИРУЮЩЕГО района (а не середину между двумя секторами)."""
+    pts = list(coords)
+    target = max(2, int(len(coords) * frac))
+    while len(pts) > target:
+        clat = sum(p[0] for p in pts) / len(pts)
+        clon = sum(p[1] for p in pts) / len(pts)
+        far = max(pts, key=lambda p: haversine_km(clat, clon, p[0], p[1]))
+        pts.remove(far)
+    clat = sum(p[0] for p in pts) / len(pts)
+    clon = sum(p[1] for p in pts) / len(pts)
+    return (clat, clon)
+
+
 def reorder_day(
     result: RouteResult,
     day_idx: int,
@@ -90,7 +108,7 @@ def reorder_day(
     return ds
 
 
-def swap_day(
+def recluster_day(
     result: RouteResult,
     day_idx: int,
     variant: int,
@@ -101,85 +119,123 @@ def swap_day(
     road_matrix,
     focus,
     work_on_weekends,
+    locked_dates: set[str] | None = None,
 ):
-    """Меняет состав дня: обмен визитами с пулом «Не запланировано».
+    """Пересобирает день в один компактный куст (без «кругов»).
 
-    Возвращает в маршрут визиты из пула, а в пул отправляет точки дня, дальние
-    от его центра («худшие»). Размер дня не меняется (1-в-1). Один и тот же
-    point_id не ставится в один день дважды.
+    Точки целевого дня и соседних НЕЗАФИКСИРОВАННЫХ дней объединяются в окно и
+    перераспределяются: каждый день берёт ближайшие к своему якорю точки. Так
+    день, смешавший запад с севером, отдаёт «чужие» точки соседям и забирает
+    «свои». Зафиксированные дни не трогаются. Число точек окна не меняется.
     """
-    ctx = _rebuild(result, points, home, home_by_weekday, road_matrix, focus, work_on_weekends)
+    locked_dates = locked_dates or set()
     ds = result.days[day_idx]
     cur = list(ds.ordered_visits)
-    pool = list(result.unplanned)
-    if not cur or not pool:
+    if len(cur) < 2:
         return ds
 
+    ctx = _rebuild(result, points, home, home_by_weekday, road_matrix, focus, work_on_weekends)
     point_by_id = ctx["point_by_id"]
 
-    # Точки, которые уже есть в этот день — нельзя ставить их второй раз.
-    here = {_pid(v) for v in cur}
-
-    # Кандидаты на вход: из пула, чьей точки ещё нет в этот день.
-    in_cand = [v for v in pool if _pid(v) not in here]
-    if not in_cand:
-        return ds
-
-    # Центроид дня — чтобы «жертвами» (уходящими) стали дальние точки.
-    coords = []
-    for v in cur:
+    def coords_of(v):
         p = point_by_id.get(_pid(v))
-        if p is not None and p.has_coords:
-            coords.append((v, p.latitude, p.longitude))
-    if not coords:
+        return (p.latitude, p.longitude) if p is not None and p.has_coords else None
+
+    # Окно: целевой день + соседние незафиксированные дни (до ±2).
+    window = [day_idx]
+    for delta in (-1, 1, -2, 2):
+        nd = day_idx + delta
+        if 0 <= nd < len(result.days) and result.days[nd].date.isoformat() not in locked_dates and nd not in window:
+            window.append(nd)
+
+    # Все визиты окна (дни + пул) с координатами, без дублей visit_id.
+    visits: list[tuple[str, tuple[float, float]]] = []
+    seen: set[str] = set()
+    for nd in window:
+        for v in result.days[nd].ordered_visits:
+            if v in seen:
+                continue
+            seen.add(v)
+            c = coords_of(v)
+            if c:
+                visits.append((v, c))
+    for v in result.unplanned:
+        if v in seen:
+            continue
+        seen.add(v)
+        c = coords_of(v)
+        if c:
+            visits.append((v, c))
+
+    if len(visits) < len(cur):
         return ds
-    clat = sum(c[1] for c in coords) / len(coords)
-    clon = sum(c[2] for c in coords) / len(coords)
 
-    def dist_from_center(item):
-        return haversine_km(clat, clon, item[1], item[2])
+    # Якорь каждого дня окна — усечённый центроид его текущих точек.
+    anchors = {}
+    for nd in window:
+        cs = [c for v in result.days[nd].ordered_visits if (c := coords_of(v)) is not None]
+        if len(cs) >= 2:
+            anchors[nd] = _trimmed_anchor(cs)
+        elif cs:
+            anchors[nd] = cs[0]
+        else:
+            anchors[nd] = None
 
-    coords.sort(key=dist_from_center)  # ближние -> дальние
-    victims = [v for v, _, _ in coords][::-1]  # дальние -> ближние (худшие первыми)
+    targets = {nd: len(result.days[nd].ordered_visits) for nd in window}
 
-    # Кандидаты на вход: ближние к центру дня первыми (куст остаётся компактным);
-    # вариант сдвигает окно, чтобы каждое нажатие давало немного другой набор.
-    def _cdist(v):
-        p = point_by_id.get(_pid(v))
-        if p is None or not p.has_coords:
-            return float("inf")
-        return haversine_km(clat, clon, p.latitude, p.longitude)
+    # Жадное перераспределение: день окна берёт ближайшие к своему якорю точки.
+    # Один point_id не ставится в окно дважды (повтор точки не должен падать в
+    # соседний день).
+    remaining = list(visits)
+    assigned: dict[int, list[str]] = {nd: [] for nd in window}
+    used_pids: set[str] = set()
+    for nd in window:
+        a = anchors[nd]
+        if a is None:
+            continue
+        cand = sorted(remaining, key=lambda vc: haversine_km(a[0], a[1], vc[1][0], vc[1][1]))
+        for v, c in cand:
+            if len(assigned[nd]) >= targets[nd]:
+                break
+            if _pid(v) in used_pids:
+                continue
+            assigned[nd].append(v)
+            used_pids.add(_pid(v))
+            remaining.remove((v, c))
 
-    in_cand.sort(key=_cdist)
-    off = variant % max(1, len(in_cand))
-    in_cand = in_cand[off:] + in_cand[:off]
+    # Добрать недозаполненные дни из остатка.
+    for nd in window:
+        for v, c in list(remaining):
+            if len(assigned[nd]) >= targets[nd]:
+                break
+            if _pid(v) in used_pids:
+                continue
+            assigned[nd].append(v)
+            used_pids.add(_pid(v))
+            remaining.remove((v, c))
 
-    k = max(1, min(len(cur) // 4, len(in_cand), len(victims)))
-    if k < 1:
-        return ds
+    # Применить.
+    all_assigned: set[str] = set()
+    for nd in window:
+        result.days[nd].ordered_visits = assigned[nd]
+        all_assigned.update(assigned[nd])
 
-    out = victims[:k]
-    inc = in_cand[:k]
+    # Пул: старый пул без назначенных + точки окна, оставшиеся неназначенными.
+    new_pool = [v for v in result.unplanned if v not in all_assigned]
+    for v, c in visits:
+        if v not in all_assigned and v not in new_pool:
+            new_pool.append(v)
+    result.unplanned = new_pool
 
-    for c, v in zip(inc, out):
-        if c not in ds.ordered_visits and v in ds.ordered_visits:
-            ds.ordered_visits[ds.ordered_visits.index(v)] = c
-            if c in result.unplanned:
-                result.unplanned.remove(c)
-            result.unplanned.append(v)
+    # Пересортировать все дни окна.
+    for nd in window:
+        reorder_day(
+            result, nd, variant,
+            points=points, home=home, home_by_weekday=home_by_weekday,
+            road_matrix=road_matrix, focus=focus, work_on_weekends=work_on_weekends,
+        )
 
-    # Пересортировать день после замены состава.
-    return reorder_day(
-        result,
-        day_idx,
-        variant,
-        points=points,
-        home=home,
-        home_by_weekday=home_by_weekday,
-        road_matrix=road_matrix,
-        focus=focus,
-        work_on_weekends=work_on_weekends,
-    )
+    return result.days[day_idx]
 
 
 def regenerate_day(
@@ -194,13 +250,15 @@ def regenerate_day(
     focus,
     work_on_weekends,
     swap: bool = True,
+    locked_dates: set[str] | None = None,
 ):
-    """Полная переделка дня: (опционально) состав + порядок. Возвращает день."""
+    """Полная переделка дня: (опционально) компактный состав + порядок."""
     if swap:
-        swap_day(
+        recluster_day(
             result, day_idx, variant,
             points=points, home=home, home_by_weekday=home_by_weekday,
             road_matrix=road_matrix, focus=focus, work_on_weekends=work_on_weekends,
+            locked_dates=locked_dates,
         )
     return reorder_day(
         result, day_idx, variant,
