@@ -580,6 +580,9 @@ section.panel { padding: 28px; }
 .modal {
   width: 100%;
   max-width: 460px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
   background: #fff;
   border-radius: var(--radius);
   padding: 24px;
@@ -597,6 +600,9 @@ section.panel { padding: 28px; }
   font-size: 14.5px;
   line-height: 1.55;
   color: var(--text-muted);
+  overflow-y: auto;
+  min-height: 0;
+  flex: 0 1 auto;
 }
 
 .modal-actions {

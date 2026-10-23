@@ -388,32 +388,11 @@ def assign_days(
                     return float("inf")
                 return haversine_km(h[0], h[1], p[0], p[1])
 
-            def _corridor_score(h, pid):
-                """Скоринг точки для дня со стартом `h` и возвратом `home`.
-
-                «Начиная с близлежащих точек по дороге к дому»: сначала точки
-                БЛИЖЕ к старту (d_start), затем те, что ПО ДОРОГЕ к дому (малый
-                объезд от прямой старт→дом). Формула: 2·d_start + d_home − d_direct
-                (= d_start + объезд). Для обычного дня дома (`h == home`)
-                вырождается в «ближе к дому» (3·d_start).
-                """
-                if h is None or home is None or coords is None:
-                    return _home_dist_to_pid(h, pid)
-                c = point_cluster.get(pid)
-                cc = center.get(c) if c is not None else None
-                p = cc if cc is not None else coords.get(pid)
-                if p is None:
-                    return float("inf")
-                d_start = haversine_km(h[0], h[1], p[0], p[1])
-                d_home = haversine_km(home[0], home[1], p[0], p[1])
-                d_direct = haversine_km(h[0], h[1], home[0], home[1])
-                return 2.0 * d_start + d_home - d_direct
-
             # 1а. Покрытие (слот 0): каждый день берёт НЕЗАНЯТЫЕ кусты ближе
-            #     всего к своему стартовому адресу (дом или переопределение).
-            #     Так день с другим стартом собирает маршрут кустом рядом с этим
-            #     адресом и идёт к дому, а не едет через весь город к «чужим»
-            #     точкам.
+            #     всего к своему стартовому адресу (дом или переопределение) —
+            #     КУЧНО рядом со стартом. Потом маршрут просто едет домой
+            #     (возврат в базовый дом). Не тянем точки «по дороге к дому» —
+            #     это размазывало день в сторону дома вместо компактного куста.
             covered: set[str] = set()
             for d in range(n_days):
                 h = day_homes[d]
@@ -421,7 +400,7 @@ def assign_days(
                 if h is not None and coords is not None and point_cluster:
                     cand.sort(
                         key=lambda pid: (
-                            _corridor_score(h, pid),
+                            _home_dist_to_pid(h, pid),
                             cluster_rank.get(point_cluster.get(pid, -1), 1 << 30),
                         )
                     )

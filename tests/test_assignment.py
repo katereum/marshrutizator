@@ -188,23 +188,23 @@ class TestAssignment(unittest.TestCase):
         self.assertEqual(d0, set(south))
         self.assertEqual(d1, set(north))
 
-    def test_per_day_home_override_prefers_points_toward_home(self):
-        # «Начиная с близлежащих точек ПО ДОРОГЕ К ДОМУ»: при равной близости к
-        # стартовому адресу день должен брать точки В СТОРОНУ дома, а не за спину.
+    def test_per_day_home_override_takes_nearest_to_override(self):
+        # День с другим стартом берёт точки КУЧНО возле СТАРТОВОГО адреса —
+        # ближайшие к старту, независимо от направления к дому (не «по дороге к
+        # дому», а компактным кустом, потом едем домой).
         home = (55.86, 37.50)                    # дом — север
         home_by_weekday = {0: (55.68, 37.50)}    # понедельник стартует с юга
         coords = {
-            "toward": (55.72, 37.50),   # севернее старта → к дому
-            "away":   (55.66, 37.50),   # южнее старта → от дома (ближе к старту!)
+            "near": (55.69, 37.50),   # рядом со стартом
+            "far":  (55.75, 37.50),   # дальше от старта (в сторону дома)
         }
-        visits = [Visit("toward", 0, 0), Visit("away", 0, 1)]
+        visits = [Visit("near", 0, 0), Visit("far", 0, 1)]
         day_visits, _ = assign_days(
             visits, 3, coords=coords, caps=[1, 1, 1],
             home=home, home_by_weekday=home_by_weekday, weekdays=[0, 1, 2],
         )
         d0 = {v.rsplit("#", 1)[0] for v in day_visits[0]}
-        # «away» ближе к старту, но в противоположную от дома сторону — не берём.
-        self.assertEqual(d0, {"toward"})
+        self.assertEqual(d0, {"near"})
 
 
 if __name__ == "__main__":
