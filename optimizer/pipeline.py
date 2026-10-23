@@ -137,6 +137,12 @@ def build_route(
     for p in points:
         if p.latitude is not None and p.longitude is not None:
             coords[p.id] = (p.latitude, p.longitude)
+    # Линия метро каждой точки (для удержания станций одной линии рядом в цепочке).
+    point_line: dict[str, str] = {}
+    for p in points:
+        m = (p.metro or "").strip()
+        if m:
+            point_line[p.id] = m.rsplit("(", 1)[1].rstrip(")").strip() if "(" in m else m
     dropped: list[str] = []
     day_visits, load = assign_days(
         visits,
@@ -148,6 +154,7 @@ def build_route(
         dropped=dropped,
         home_by_weekday=home_by_weekday,
         weekdays=[d.weekday() for d in days],
+        point_line=point_line,
     )
     if caps is not None and dropped:
         extra = len(dropped)

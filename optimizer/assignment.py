@@ -83,6 +83,7 @@ def assign_days(
     dropped: list[str] | None = None,
     home_by_weekday: dict[int, tuple[float, float]] | None = None,
     weekdays: list[int] | None = None,
+    point_line: dict[str, str] | None = None,
 ) -> tuple[list[list[str]], list[int]]:
     """Распределяет визиты по дням. Возвращает (day_visits, load).
 
@@ -142,10 +143,27 @@ def assign_days(
             lat, lon, n = centroid.get(c, (0.0, 0.0, 0))
             centroid[c] = (lat + cc[0], lon + cc[1], n + 1)
         center = {c: (v[0] / v[2], v[1] / v[2]) for c, v in centroid.items()}
-        # Цепочка ближайших соседей по центроидам кустов: соседние районы идут
-        # подряд, поэтому день не «прыгает» через весь город (спринты по шоссе),
-        # а держится в одном секторе. От дома — начинаем с ближайшего куста и
-        # «ползём» змейкой; без дома — с самого северного.
+        # Линия метро каждого кластера — чтобы удерживать станции ОДНОЙ линии
+        # рядом в цепочке (не перепрыгивать через канал/МКАД на чужую ветку, пока
+        # своя не закончилась).
+        cluster_line: dict[int, str] = {}
+        if point_line is not None:
+            for pid, c in point_cluster.items():
+                ln = point_line.get(pid)
+                if ln:
+                    cluster_line.setdefault(c, ln)
+
+        LINE_PENALTY_KM = 3.0  # штраф за переход на другую линию метро
+
+        def _cluster_dist(a: int, b: int) -> float:
+            d = haversine_km(center[a][0], center[a][1], center[b][0], center[b][1])
+            la, lb = cluster_line.get(a), cluster_line.get(b)
+            if la is not None and lb is not None and la != lb:
+                d += LINE_PENALTY_KM
+            return d
+
+        # Цепочка ближайших соседей по центроидам кустов (с приоритетом своей
+        # линии): соседние районы идут подряд, день не «прыгает» через весь город.
         keys = list(center.keys())
         if keys:
             if home is not None:
@@ -156,19 +174,14 @@ def assign_days(
             remaining = set(keys) - {start}
             cur = start
             while remaining:
-                nxt = min(
-                    remaining,
-                    key=lambda c: haversine_km(center[cur][0], center[cur][1], center[c][0], center[c][1]),
-                )
+                nxt = min(remaining, key=lambda c: _cluster_dist(cur, c))
                 ranked.append(nxt)
                 remaining.remove(nxt)
                 cur = nxt
-            # 2-opt по цепочке: убираем «прыжки» через весь город (когда у текущего
-            # куста все ближние соседи уже пройдены, жадный шаг уводит далеко и день
-            # смешивает разные концы города).
+            # 2-opt по цепочке: убираем «прыжки» через весь город.
             if len(ranked) >= 4:
                 def _cd(a: int, b: int) -> float:
-                    return haversine_km(center[a][0], center[a][1], center[b][0], center[b][1])
+                    return _cluster_dist(a, b)
 
                 improved = True
                 while improved:

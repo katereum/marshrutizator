@@ -206,6 +206,29 @@ class TestAssignment(unittest.TestCase):
         d0 = {v.rsplit("#", 1)[0] for v in day_visits[0]}
         self.assertEqual(d0, {"near"})
 
+    def test_same_metro_line_kept_together(self):
+        # Станции одной линии метро должны оставаться рядом в цепочке, а не
+        # чередоваться с чужой веткой (через канал/МКАД). Регрессия на «круги» —
+        # день, смешивавший Сходненскую/Планерную (NW) с Водным/Речным (N).
+        coords = {
+            "a1": (55.86, 37.50),  # линия A
+            "b1": (55.85, 37.50),  # линия B (географически между a1 и a2)
+            "a2": (55.84, 37.50),  # линия A
+            "b2": (55.83, 37.50),  # линия B
+        }
+        point_line = {"a1": "A", "a2": "A", "b1": "B", "b2": "B"}
+        visits = [
+            Visit("a1", 0, 0), Visit("b1", 0, 1),
+            Visit("a2", 0, 2), Visit("b2", 0, 3),
+        ]
+        day_visits, _ = assign_days(
+            visits, 2, coords=coords, caps=[2, 2], home=(55.87, 37.50), point_line=point_line,
+        )
+        d0 = {v.rsplit("#", 1)[0] for v in day_visits[0]}
+        d1 = {v.rsplit("#", 1)[0] for v in day_visits[1]}
+        self.assertEqual(d0, {"a1", "a2"})
+        self.assertEqual(d1, {"b1", "b2"})
+
 
 if __name__ == "__main__":
     unittest.main()
