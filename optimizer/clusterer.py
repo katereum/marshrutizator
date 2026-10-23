@@ -132,10 +132,14 @@ def _merge_neighbors(
     склеивается в один гигантский куст, а делится на компактные сегменты.
     """
     by_c: dict[int, list[tuple[float, float]]] = {}
+    line_of_c: dict[int, str] = {}
     for p in points:
         c = cluster.get(p.id)
         if c is not None and p.latitude is not None and p.longitude is not None:
             by_c.setdefault(c, []).append((p.latitude, p.longitude))
+        if c is not None and c not in line_of_c:
+            m = (p.metro or "").strip()
+            line_of_c[c] = m.rsplit("(", 1)[1].rstrip(")").strip() if "(" in m else ""
     if not by_c:
         return cluster
 
@@ -176,6 +180,11 @@ def _merge_neighbors(
     for d, a, b in pairs:
         ra, rb = find(a), find(b)
         if ra == rb:
+            continue
+        # НЕ сливаем станции РАЗНЫХ линий метро (через реку/канал): иначе куст
+        # перелезает через водохранилище и день делает круг вокруг реки.
+        la, lb = line_of_c.get(ra, ""), line_of_c.get(rb, "")
+        if la and lb and la != lb:
             continue
         if merged_diag(ra, rb) <= max_diameter_km:
             parent[ra] = rb
