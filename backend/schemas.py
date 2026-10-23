@@ -57,3 +57,12 @@ class OptimizeDaysRequest(BaseModel):
 
     employee: str
     dates: list[date]
+
+
+class EditPointRequest(BaseModel):
+    """Ручная правка дня на карте: убрать точку из дня или добавить из пула."""
+
+    employee: str
+    date: date
+    code: str
+    action: Literal["remove", "add"]

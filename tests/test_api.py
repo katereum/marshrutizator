@@ -193,6 +193,50 @@ class TestAPI(unittest.TestCase):
         locked0 = [d["locked"] for d in r.json()["routes"][0]["days"] if d["date"] == dates[0]]
         self.assertEqual(locked0, [True])
 
+    def test_edit_point_remove_and_add(self):
+        planning = make_xlsx(
+            PLANNING_COLUMNS,
+            [planning_row("A001", 1), planning_row("A002", 1), planning_row("A003", 1)],
+        )
+        r = self.client.post("/api/upload/planning", files={"file": ("planning.xlsx", planning, XLSX_MIME)})
+        pid = r.json()["file_id"]
+
+        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road, patch("backend.app.route_geometry") as mock_route_geo:
+            mock_geo.geocode.return_value = (55.75, 37.61)
+            mock_road.matrix.return_value = [[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]
+            mock_route_geo.route.return_value = None
+            r = self.client.post("/api/optimize", json={
+                "planning_file_id": pid, "period_start": "2026-09-01", "period_end": "2026-09-30",
+            })
+        jid = r.json()["job_id"]
+
+        r = self.client.get(f"/api/result/{jid}/days")
+        routes = r.json()["routes"]
+        emp = routes[0]["employee"]
+        first = routes[0]["days"][0]
+        date = first["date"]
+        code = first["visits"][0]["code"]
+
+        # Убрать точку из дня → она уходит в «Не запланировано».
+        r = self.client.post(f"/api/result/{jid}/edit_point", json={
+            "employee": emp, "date": date, "code": code, "action": "remove",
+        })
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(any(v.rsplit("#", 1)[0] == code for v in r.json()["unplanned"]))
+
+        r = self.client.get(f"/api/result/{jid}/days")
+        day = [d for d in r.json()["routes"][0]["days"] if d["date"] == date][0]
+        self.assertNotIn(code, [v["code"] for v in day["visits"]])
+
+        # Добавить обратно из пула → точка снова в дне.
+        r = self.client.post(f"/api/result/{jid}/edit_point", json={
+            "employee": emp, "date": date, "code": code, "action": "add",
+        })
+        self.assertEqual(r.status_code, 200)
+        r = self.client.get(f"/api/result/{jid}/days")
+        day = [d for d in r.json()["routes"][0]["days"] if d["date"] == date][0]
+        self.assertIn(code, [v["code"] for v in day["visits"]])
+
     def test_optimize_falls_back_without_road_matrix(self):
         planning = make_xlsx(
             PLANNING_COLUMNS,

@@ -13,6 +13,10 @@ const state = {
   planningFileId: null,
   jobId: null,
   routeEmployee: null,
+  editingDate: null,          // дата дня, который редактируем на карте (null — не редактируем)
+  dayCodes: {},               // date -> Set(code) — какие точки в каком дне
+  unplannedCodes: new Set(),  // коды точек в «Не запланировано»
+  markers: {},                // code -> L.circleMarker (для подсветки при редактировании)
 };
 
 const el = (id) => document.getElementById(id);
@@ -257,6 +261,7 @@ function renderMap(jobId) {
       // Точки — всегда видимые маркеры, раскрашенные по оценке (рейтингу).
       const pointsLayer = L.layerGroup();
       const pointsBounds = [];
+      state.markers = {};
       pointFeatures.forEach((p) => {
         const pr = p.properties;
         const [lon, lat] = p.geometry.coordinates;
@@ -282,10 +287,14 @@ function renderMap(jobId) {
           `<span class="pt-addr">${escapeHtml(pr.address)}</span>` + meta,
           { direction: "top", offset: [0, -6], className: "point-tooltip", opacity: 1 }
         );
+        marker.on("click", () => onMarkerClick(pr.code));
+        marker._baseColor = freqColor(pr.frequency);
         pointsLayer.addLayer(marker);
         pointsBounds.push([lat, lon]);
+        state.markers[pr.code] = marker;
       });
       pointsLayer.addTo(map);
+      applyEditVisuals();
 
       // Легенда цикличности (цвета точек).
       if (!map._freqLegend) {
@@ -343,6 +352,112 @@ function renderMap(jobId) {
       };
     })
     .catch((err) => console.error("Ошибка отрисовки карты:", err));
+}
+
+// ── Ручное редактирование точек на карте ──────────────────────────
+
+function applyEditVisuals() {
+  const editing = state.editingDate;
+  const inDay = editing ? (state.dayCodes[editing] || new Set()) : null;
+  Object.entries(state.markers).forEach(([code, m]) => {
+    if (!m || !m.setStyle) return;
+    if (!editing) {
+      m.setStyle({ fillColor: m._baseColor, color: "#ffffff", weight: 1.5, fillOpacity: 1, radius: 6 });
+      return;
+    }
+    if (inDay && inDay.has(code)) {
+      // в редактируемом дне — клик уберёт
+      m.setStyle({ fillColor: m._baseColor, color: "#000000", weight: 2.5, fillOpacity: 1, radius: 8 });
+    } else {
+      // не в дне — клик добавит (из «Не запланировано» или из другого дня)
+      m.setStyle({ fillColor: "#0ea5e9", color: "#000000", weight: 2.5, fillOpacity: 1, radius: 8 });
+    }
+  });
+}
+
+function onMarkerClick(code) {
+  if (!state.editingDate) return;
+  togglePoint(code);
+}
+
+function restoreEditView() {
+  if (!state.editingDate) return;
+  const select = el("view-select");
+  if (select) {
+    select.value = state.editingDate;
+    if (select.onchange) select.onchange();
+  }
+}
+
+async function togglePoint(code) {
+  const date = state.editingDate;
+  if (!date) return;
+  const inDay = state.dayCodes[date] ? state.dayCodes[date].has(code) : false;
+  const action = inDay ? "remove" : "add";
+  try {
+    const resp = await fetch(`/api/result/${state.jobId}/edit_point`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ employee: state.routeEmployee, date, code, action }),
+    });
+    if (!resp.ok) {
+      setStatus(await readErrorMessage(resp), true);
+      return;
+    }
+  } catch (e) {
+    setStatus("Не удалось сохранить правку", true);
+    return;
+  }
+  if (action === "remove") {
+    if (state.dayCodes[date]) state.dayCodes[date].delete(code);
+    state.unplannedCodes.add(code);
+  } else {
+    if (!state.dayCodes[date]) state.dayCodes[date] = new Set();
+    state.dayCodes[date].add(code);
+    state.unplannedCodes.delete(code);
+  }
+  await renderDays(state.jobId);
+  await renderMap(state.jobId);
+  restoreEditView();
+}
+
+function enterEditMode(date) {
+  state.editingDate = date;
+  applyEditVisuals();
+  restoreEditView();
+  showEditHint();
+}
+
+function exitEditMode() {
+  state.editingDate = null;
+  applyEditVisuals();
+  const select = el("view-select");
+  if (select) {
+    select.value = "all";
+    if (select.onchange) select.onchange();
+  }
+  hideEditHint();
+  renderDays(state.jobId);
+}
+
+function showEditHint() {
+  let hint = el("edit-hint");
+  if (!hint) {
+    hint = document.createElement("div");
+    hint.id = "edit-hint";
+    hint.className = "edit-hint";
+    mapSection.appendChild(hint);
+  }
+  hint.innerHTML =
+    "<b>Режим правки:</b> кликни точку — чёрная обводка = убрать из дня, синяя = добавить в день. " +
+    '<button id="edit-done" class="day-btn approve" type="button">Готово</button>';
+  const done = el("edit-done");
+  if (done) done.onclick = exitEditMode;
+}
+
+function hideEditHint() {
+  const hint = el("edit-hint");
+  if (hint) hint.remove();
 }
 
 function runStageSequence() {
@@ -563,6 +678,11 @@ async function renderDays(jobId) {
   const route = routes[0]; // одна база = один торговый представитель (обычный случай)
   if (!route) return;
   state.routeEmployee = route.employee;
+  state.dayCodes = {};
+  route.days.forEach((day) => {
+    state.dayCodes[day.date] = new Set(day.visits.map((v) => v.code));
+  });
+  state.unplannedCodes = new Set((route.unplanned || []).map((v) => v.split("#")[0]));
   daysSection.classList.remove("hidden");
   daysList.innerHTML = "";
   route.days.forEach((day) => daysList.appendChild(buildDayRow(day)));
@@ -631,6 +751,15 @@ function buildDayRow(day) {
     approveBtn.textContent = "Согласовать";
     approveBtn.onclick = () => lockDay(day.date);
     actions.appendChild(approveBtn);
+
+    const editBtn = document.createElement("button");
+    editBtn.className = "day-btn edit";
+    editBtn.textContent = state.editingDate === day.date ? "Правишь на карте…" : "Редактировать на карте";
+    editBtn.onclick = () => {
+      if (state.editingDate === day.date) exitEditMode();
+      else enterEditMode(day.date);
+    };
+    actions.appendChild(editBtn);
 
     const redoBtn = document.createElement("button");
     redoBtn.className = "day-btn redo";

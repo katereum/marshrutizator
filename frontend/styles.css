@@ -434,7 +434,7 @@ section.panel { padding: 28px; }
 .result-meta { margin: 12px 0 16px; font-size: 14.5px; color: var(--text-muted); }
 
 /* ── Карта ─────────────────────────────────────────────── */
-#map-section { margin-top: 20px; }
+#map-section { margin-top: 20px; position: relative; }
 
 .map-toolbar {
   display: flex;
@@ -685,6 +685,31 @@ section.panel { padding: 28px; }
 .day-btn.redo:hover { border-color: var(--accent); color: var(--accent); }
 .day-btn.redo { color: var(--accent); border-color: var(--accent); }
 .day-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.day-btn.edit {
+  color: #fff;
+  border-color: #0ea5e9;
+  background: #0ea5e9;
+}
+.day-btn.edit:hover { background: #0284c7; border-color: #0284c7; color: #fff; }
+
+.edit-hint {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  background: #111827;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 92%;
+}
+.edit-hint .day-btn { padding: 5px 10px; font-size: 12px; }
 
 /* ── Адаптив ───────────────────────────────────────────── */
 @media (max-width: 680px) {

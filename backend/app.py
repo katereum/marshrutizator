@@ -19,8 +19,8 @@ from geocoder.dadata import DadataGeocoder, suggest_addresses
 from geocoder.offline import OfflineGeocoder
 from geocoder.yandex import YandexGeocoder
 from optimizer.models import HOME_ID, Point
-from optimizer.pipeline import build_routes
-from optimizer.regenerate import regenerate_day
+from optimizer.pipeline import _total_km, build_routes
+from optimizer.regenerate import _rebuild, regenerate_day
 from optimizer.calendar import working_days
 from router import (
     ChainRoadDistance,
@@ -45,7 +45,7 @@ from parser import (
 )
 
 from .jobstore import JobStore
-from .schemas import DayAction, OptimizeDaysRequest, OptimizeRequest, RegenerateRequest
+from .schemas import DayAction, EditPointRequest, OptimizeDaysRequest, OptimizeRequest, RegenerateRequest
 
 try:
     from dotenv import load_dotenv
@@ -701,6 +701,63 @@ def optimize_days(job_id: str, body: OptimizeDaysRequest):
     store.update(job_id, results=job["results"], geojson=_rebuild_geojson(job))
     total_km = round(job["results"][0].stats.total_km, 1) if job["results"] else 0
     return {"redone": redone, "total_km": total_km}
+
+
+@app.post("/api/result/{job_id}/edit_point")
+def edit_point(job_id: str, body: EditPointRequest):
+    """Ручная правка дня на карте: убрать точку из дня или добавить из пула.
+
+    `code` — код торговой точки (point_id). Действие `remove` переносит визиты
+    точки из дня в «Не запланировано»; `add` — наоборот, из пула в день.
+    """
+    job = store.get(job_id)
+    if job is None or job.get("results") is None:
+        raise HTTPException(status_code=404, detail="Результат не найден")
+    r, i = _find_result_and_day(job, body.employee, body.date.isoformat())
+    if r is None or i is None:
+        raise HTTPException(status_code=404, detail="День не найден")
+    ds = r.days[i]
+    code = body.code
+    in_day = [v for v in ds.ordered_visits if v.rsplit("#", 1)[0] == code]
+    in_unplanned = [v for v in r.unplanned if v.rsplit("#", 1)[0] == code]
+
+    if body.action == "remove":
+        if not in_day:
+            raise HTTPException(status_code=409, detail="Точки нет в этом дне")
+        ds.ordered_visits = [v for v in ds.ordered_visits if v.rsplit("#", 1)[0] != code]
+        r.unplanned = list(r.unplanned) + in_day
+    else:  # add — берём точку из «Не запланировано» или перетаскиваем из другого дня
+        if in_unplanned:
+            r.unplanned = [v for v in r.unplanned if v.rsplit("#", 1)[0] != code]
+            ds.ordered_visits = list(ds.ordered_visits) + in_unplanned
+        else:
+            moved = []
+            for j, other in enumerate(r.days):
+                if j == i:
+                    continue
+                moved = [v for v in other.ordered_visits if v.rsplit("#", 1)[0] == code]
+                if moved:
+                    other.ordered_visits = [v for v in other.ordered_visits if v.rsplit("#", 1)[0] != code]
+                    ds.ordered_visits = list(ds.ordered_visits) + moved
+                    break
+            if not moved:
+                raise HTTPException(status_code=409, detail="Точки нет ни в «Не запланировано», ни в других днях")
+
+    # Пересчитать суммарный километраж (маршрут изменился).
+    points = list((job.get("points_by_id") or {}).values())
+    ctx = _rebuild(
+        r, points, job.get("home"), job.get("home_by_weekday"),
+        job.get("road_matrix"), job.get("focus") or "economy", job.get("work_on_weekends", False),
+    )
+    r.stats.total_km = _total_km(r.days, ctx["node_distance"], ctx["day_home_dist"], ctx["base_home_dist"])
+
+    store.update(job_id, results=job["results"], geojson=_rebuild_geojson(job))
+    return {
+        "date": ds.date.isoformat(),
+        "count": len(ds.ordered_visits),
+        "total_km": round(r.stats.total_km, 1),
+        "unplanned": r.unplanned,
+    }
 
 
 @app.get("/api/result/{job_id}/geojson")
