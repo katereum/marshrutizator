@@ -350,19 +350,29 @@ def assign_days(
             h is not None and h != home for h in day_homes
         )
 
+        # Сколько дней уходит на ПОКРЫТИЕ (слот 0). Повторы живут строго после —
+        # иначе последние точки покрытия «переливаются» в дни повторов и смешивают
+        # разные концы города (главная причина кругов на второй неделе). Берём
+        # ceil(число покрытий / базовый лимит), чтобы дни покрытия были полными,
+        # а редкий «хвост» покрытия шёл кучно в дни повторов (не отдельным днём).
+        n_cov = sum(1 for v in visits if v.slot_index == 0)
+        base_cap = max(caps) if caps else 1
+        cov_limit = min(n_days, (n_cov + base_cap - 1) // base_cap)
+        overflow_cov: list[tuple[str, Visit]] = []
+
         if not use_per_day:
             # 1а. Покрытие (слот 0) — ПОСЛЕДОВАТЕЛЬНО по секторам: соседние
             #     районы идут подряд, день наполняется компактно, без прыжков.
+            #     Строго до cov_limit — покрытие не смешивается с повторами.
             cur = 0
             for pid in order:
                 for v in by_point[pid]:
                     if v.slot_index != 0:
                         continue
-                    while cur < n_days and load[cur] >= caps[cur]:
+                    while cur < cov_limit and load[cur] >= caps[cur]:
                         cur += 1
-                    if cur >= n_days:
-                        if dropped is not None:
-                            dropped.append(v.visit_id)
+                    if cur >= cov_limit:
+                        overflow_cov.append((pid, v))
                         continue
                     _commit(pid, v, False, cur)
         else:
@@ -412,8 +422,8 @@ def assign_days(
         #     дни добираются ниже.
         unplaced: list[tuple[str, Visit]] = []
         for slot_level in range(1, 6):
-            rcur = 0
-            seq = order if slot_level % 2 == 1 else list(reversed(order))
+            rcur = cov_limit
+            seq = order
             for pid in seq:
                 for v in by_point[pid]:
                     if v.slot_index != slot_level:
@@ -453,6 +463,20 @@ def assign_days(
                 continue
             d = min(cand, key=lambda dd: day_cost(pid, dd))
             _commit(pid, v, True, d)
+
+        # Перелив покрытия: точки, не влезшие в дни покрытия (их слот 0 не
+        # поместился до cov_limit), кладём кучно — в день повторов с ближайшим
+        # центроидом (свой район), а не в первый свободный (иначе N-точка едет в
+        # SW-день и получается круг).
+        for pid, v in overflow_cov:
+            chosen = chosen_by_pid.get(pid, set())
+            cand = [d for d in range(n_days) if d not in chosen and load[d] < caps[d]]
+            if not cand:
+                if dropped is not None:
+                    dropped.append(v.visit_id)
+                continue
+            d = min(cand, key=lambda dd: day_cost(pid, dd))
+            _commit(pid, v, False, d)
     else:
         # Авто-баланс: жадный (прежнее поведение).
         for pid in order:
