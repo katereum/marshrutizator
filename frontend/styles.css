@@ -536,6 +536,32 @@ section.panel { padding: 28px; }
   font-weight: 600;
 }
 
+/* ── Легенда цикличности на карте ─────────────────────── */
+.freq-legend {
+  background: #ffffff;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm, 8px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  font-size: 12px;
+  line-height: 1.9;
+  color: #111827;
+}
+.freq-legend-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.freq-legend-row {
+  display: block;
+  white-space: nowrap;
+}
+.freq-legend-row i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
 .hidden { display: none !important; }
 
 /* ── Модальное окно подтверждения ──────────────────────── */

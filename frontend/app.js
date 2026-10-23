@@ -173,12 +173,12 @@ function escapeHtml(s) {
   }[c]));
 }
 
-// Цвет точки по оценке (рейтинг): красный — проблемные, зелёный — хорошие.
-function scoreColor(score) {
-  if (score == null) return "#94a3b8"; // серый — не оценено
-  if (score <= 2) return "#e11d48";    // красный — проблемные
-  if (score <= 3) return "#f59e0b";    // янтарный — средние
-  return "#16a34a";                    // зелёный — хорошие
+// Цвет точки по цикличности: зелёный — 1 раз/мес, жёлтый — 2, красный — 3 и больше.
+function freqColor(freq) {
+  const f = Number(freq) || 1;
+  if (f >= 3) return "#e11d48";   // красный — 3 раза и чаще
+  if (f === 2) return "#f59e0b";  // жёлтый — 2 раза
+  return "#16a34a";               // зелёный — 1 раз
 }
 
 function fitMap(map, bounds) {
@@ -260,7 +260,7 @@ function renderMap(jobId) {
           radius: 6,
           color: "#ffffff",
           weight: 1.5,
-          fillColor: scoreColor(pr.score),
+          fillColor: freqColor(pr.frequency),
           fillOpacity: 1,
         });
 
@@ -282,6 +282,22 @@ function renderMap(jobId) {
         pointsBounds.push([lat, lon]);
       });
       pointsLayer.addTo(map);
+
+      // Легенда цикличности (цвета точек).
+      if (!map._freqLegend) {
+        const legend = L.control({ position: "bottomright" });
+        legend.onAdd = function () {
+          const div = L.DomUtil.create("div", "freq-legend");
+          div.innerHTML =
+            '<div class="freq-legend-title">Цикличность</div>' +
+            '<span class="freq-legend-row"><i style="background:#16a34a"></i>1 раз/мес</span>' +
+            '<span class="freq-legend-row"><i style="background:#f59e0b"></i>2 раза/мес</span>' +
+            '<span class="freq-legend-row"><i style="background:#e11d48"></i>3 раза и больше</span>';
+          return div;
+        };
+        legend.addTo(map);
+        map._freqLegend = legend;
+      }
 
       // Наполняем селектор: все / по дням / по неделям.
       const dates = Object.keys(layersByDate).sort();
