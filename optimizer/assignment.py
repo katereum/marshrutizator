@@ -163,6 +163,23 @@ def assign_days(
                 ranked.append(nxt)
                 remaining.remove(nxt)
                 cur = nxt
+            # 2-opt по цепочке: убираем «прыжки» через весь город (когда у текущего
+            # куста все ближние соседи уже пройдены, жадный шаг уводит далеко и день
+            # смешивает разные концы города).
+            if len(ranked) >= 4:
+                def _cd(a: int, b: int) -> float:
+                    return haversine_km(center[a][0], center[a][1], center[b][0], center[b][1])
+
+                improved = True
+                while improved:
+                    improved = False
+                    for i in range(1, len(ranked) - 2):
+                        for j in range(i + 1, len(ranked) - 1):
+                            before = _cd(ranked[i - 1], ranked[i]) + _cd(ranked[j], ranked[j + 1])
+                            after = _cd(ranked[i - 1], ranked[j]) + _cd(ranked[i], ranked[j + 1])
+                            if after < before - 1e-9:
+                                ranked[i : j + 1] = list(reversed(ranked[i : j + 1]))
+                                improved = True
         else:
             ranked = []
         cluster_rank = {c: i for i, c in enumerate(ranked)}
@@ -389,18 +406,36 @@ def assign_days(
                         covered.add(pid)
                         break
 
-        # 1б. Повторы (слот 1+): жадное размещение с привязкой района к циклу —
-        #     повторные визиты района идут ВМЕСТЕ на свой цикл-день (штраф
-        #     cluster_penalty2), а не разлетаются по секторам. Минимальный разрыв
-        #     соблюдается мягко: _place сам заполняет свободные дни (день выходит
-        #     РОВНО 17/12), уходит только то, что не влезает в ёмкость.
-        for pid in order:
-            for v in by_point[pid]:
-                if v.slot_index == 0:
-                    continue
-                if not _place(pid, v, freq[pid], True):
-                    if dropped is not None:
-                        dropped.append(v.visit_id)
+        # 1б. Повторы (слот 1+): заполняем оставшиеся дни последовательно по
+        #     цепочке секторов (как покрытие) — кучно. Уровни идут по порядку,
+        #     разрыв цикличности соблюдается мягко (покрытие в первой половине,
+        #     повторы во второй). Недозаполненные дни добираются без потери.
+        unplaced: list[tuple[str, Visit]] = []
+        cur = 0
+        while cur < n_days and load[cur] >= caps[cur]:
+            cur += 1
+        for slot_level in range(1, 6):
+            for pid in order:
+                for v in by_point[pid]:
+                    if v.slot_index != slot_level:
+                        continue
+                    while cur < n_days and load[cur] >= caps[cur]:
+                        cur += 1
+                    if cur >= n_days:
+                        unplaced.append((pid, v))
+                        continue
+                    _commit(pid, v, True, cur)
+        # Добрать недозаполненные дни (день должен быть РОВНО 17/12). Точку
+        # кладём в день с БЛИЖАЙШИМ центроидом (свой район), а не в хвост месяца.
+        for pid, v in unplaced:
+            chosen = chosen_by_pid.get(pid, set())
+            cand = [d for d in range(n_days) if d not in chosen and load[d] < caps[d]]
+            if not cand:
+                if dropped is not None:
+                    dropped.append(v.visit_id)
+                continue
+            d = min(cand, key=lambda dd: day_cost(pid, dd))
+            _commit(pid, v, True, d)
     else:
         # Авто-баланс: жадный (прежнее поведение).
         for pid in order:
