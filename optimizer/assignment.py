@@ -406,30 +406,47 @@ def assign_days(
                         covered.add(pid)
                         break
 
-        # 1б. Повторы (слот 1+): заполняем оставшиеся дни последовательно по
-        #     цепочке секторов (как покрытие) — кучно. Уровни идут по порядку,
-        #     разрыв цикличности соблюдается мягко (покрытие в первой половине,
-        #     повторы во второй). Недозаполненные дни добираются без потери.
+        # 1б. Повторы (слот 1+): по уровням, с МИНИМАЛЬНЫМ разрывом от прошлого
+        #     визита точки (точку с цикличностью >1 НЕ ставим на соседний день).
+        #     Уровни идут по цепочке секторов «змейкой» (кучно). Недозаполненные
+        #     дни добираются ниже.
         unplaced: list[tuple[str, Visit]] = []
-        cur = 0
-        while cur < n_days and load[cur] >= caps[cur]:
-            cur += 1
         for slot_level in range(1, 6):
-            for pid in order:
+            rcur = 0
+            seq = order if slot_level % 2 == 1 else list(reversed(order))
+            for pid in seq:
                 for v in by_point[pid]:
                     if v.slot_index != slot_level:
                         continue
-                    while cur < n_days and load[cur] >= caps[cur]:
-                        cur += 1
-                    if cur >= n_days:
+                    chosen = chosen_by_pid.get(pid, set())
+                    prev = max(chosen) if chosen else 0
+                    d = max(rcur, prev + _min_gap(freq[pid]))
+                    while d < n_days and (load[d] >= caps[d] or d in chosen):
+                        d += 1
+                    if d >= n_days:
                         unplaced.append((pid, v))
                         continue
-                    _commit(pid, v, True, cur)
+                    _commit(pid, v, True, d)
+                    rcur = d
         # Добрать недозаполненные дни (день должен быть РОВНО 17/12). Точку
-        # кладём в день с БЛИЖАЙШИМ центроидом (свой район), а не в хвост месяца.
+        # кладём в день с БЛИЖАЙШИМ центроидом (свой район), а не в хвост месяца,
+        # и НИКОГДА не ставим визиты точки ПОДРЯД (минимальный разрыв держим).
         for pid, v in unplaced:
             chosen = chosen_by_pid.get(pid, set())
-            cand = [d for d in range(n_days) if d not in chosen and load[d] < caps[d]]
+            prev = max(chosen) if chosen else 0
+            gap = _min_gap(freq[pid])
+            cand = [
+                d
+                for d in range(n_days)
+                if d not in chosen and load[d] < caps[d] and d - prev >= gap
+            ]
+            if not cand:
+                # смягчаем до «не подряд» (хотя бы один рабочий день между)
+                cand = [
+                    d
+                    for d in range(n_days)
+                    if d not in chosen and load[d] < caps[d] and d - prev >= 2
+                ]
             if not cand:
                 if dropped is not None:
                     dropped.append(v.visit_id)
