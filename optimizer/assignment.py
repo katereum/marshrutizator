@@ -623,11 +623,13 @@ def tidy_days(
     coords: dict[str, tuple[float, float]],
     caps: list[int] | None = None,
 ) -> tuple[list[list[str]], list[int]]:
-    """Убирает «выбросы»: точку далеко от центра своего дня тянет в ближайший день.
+    """Убирает «выбросы» и «дырки»: точку далеко от своего дня тянем к своему
+    району, а если целевой день полон — МЕНЯЕМСЯ с его самой дальней точкой.
 
-    Идёт ПОСЛЕ assign_days и consolidate_locations. Добивает последние «круги» —
-    когда в день случайно попала точка из другого конца города (например, второй
-    слот частой точки, которой не хватило места в «родном» дне).
+    Идёт ПОСЛЕ assign_days и consolidate_locations. Чинит «собрал в кусте всё,
+    кроме одной, а она рядом» + «не бери самую дальнюю»: дальняя точка уходит в
+    свой район, ближняя возвращается в свой (swap). Точки с повторными визитами
+    (slot 1+) не трогаем — разрыв цикличности важнее.
     """
     n_days = len(day_visits)
     total = sum(load)
@@ -639,7 +641,7 @@ def tidy_days(
     for v in visits:
         freq[v.point_id] = freq.get(v.point_id, 0) + 1
 
-    for _ in range(3):
+    for _ in range(4):
         # Центроид каждого дня по геокодированным точкам.
         centroid: dict[int, tuple[float, float]] = {}
         for d in range(n_days):
@@ -654,26 +656,24 @@ def tidy_days(
                 continue
             for vid in list(day_visits[d]):
                 pid = visit_pid[vid]
-                if pid not in point_coords:
-                    continue
-                # Точку с повторными визитами НЕ двигаем: минимальный разрыв
-                # цикличности (≈2 недели) важнее, чем подтягивание к центру дня.
-                if freq.get(pid, 1) > 1:
+                if pid not in point_coords or freq.get(pid, 1) > 1:
                     continue
                 c = point_coords[pid]
                 own = haversine_km(c[0], c[1], centroid[d][0], centroid[d][1])
+                # Ближайший день по центроиду (независимо от заполненности).
                 best = None
                 for d2 in range(n_days):
-                    if d2 == d or d2 not in centroid or load[d2] >= cap[d2]:
-                        continue
-                    if pid in day_pids[d2]:
+                    if d2 == d or d2 not in centroid or pid in day_pids[d2]:
                         continue
                     dist = haversine_km(c[0], c[1], centroid[d2][0], centroid[d2][1])
                     if dist < own and (best is None or dist < best[0]):
                         best = (dist, d2)
                 # Перекладываем, только если это заметно сокращает разлёт (> 2 км).
-                if best is not None and own - best[0] > 2.0:
-                    d2 = best[1]
+                if best is None or own - best[0] <= 2.0:
+                    continue
+                d2 = best[1]
+                if load[d2] < cap[d2]:
+                    # Есть место — просто перекладываем.
                     day_visits[d].remove(vid)
                     day_visits[d2].append(vid)
                     day_pids[d].discard(pid)
@@ -681,6 +681,35 @@ def tidy_days(
                     load[d] -= 1
                     load[d2] += 1
                     moved = True
+                else:
+                    # День полон — меняемся с его самой дальней точкой (swap).
+                    q = None
+                    qdist = -1.0
+                    for vv in day_visits[d2]:
+                        qp = visit_pid[vv]
+                        if qp not in point_coords or freq.get(qp, 1) > 1:
+                            continue
+                        qc = point_coords[qp]
+                        dd = haversine_km(qc[0], qc[1], centroid[d2][0], centroid[d2][1])
+                        if dd > qdist:
+                            qdist = dd
+                            q = vv
+                    if q is None:
+                        continue
+                    qp = visit_pid[q]
+                    qc = point_coords[qp]
+                    q_to_d = haversine_km(qc[0], qc[1], centroid[d][0], centroid[d][1])
+                    # Обмен выгоден, если суммарный разлёт уменьшается.
+                    if best[0] + q_to_d < own + qdist:
+                        day_visits[d].remove(vid)
+                        day_visits[d2].remove(q)
+                        day_visits[d].append(q)
+                        day_visits[d2].append(vid)
+                        day_pids[d].discard(pid)
+                        day_pids[d].add(qp)
+                        day_pids[d2].discard(qp)
+                        day_pids[d2].add(pid)
+                        moved = True
         if not moved:
             break
 
