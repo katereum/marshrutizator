@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections import Counter
 
 from .distance import haversine_km
-from .models import Visit
+from .models import HOME_ID, Visit
 
 
 def ideal_day(slot: int, frequency: int, n_days: int) -> int:
@@ -162,12 +162,29 @@ def assign_days(
                 d += LINE_PENALTY_KM
             return d
 
+        # Медоид каждого кластера (точка, ближайшая к центроиду) — для ДОРОЖНОГО
+        # расстояния от дома: прямая через канал/водохранилище врёт.
+        cluster_rep: dict[int, str] = {}
+        if dist_fn is not None:
+            for c, cc in center.items():
+                reps = [pid for pid, pc in point_cluster.items() if pc == c and coords.get(pid) is not None]
+                if reps:
+                    cluster_rep[c] = min(reps, key=lambda pid: haversine_km(cc[0], cc[1], coords[pid][0], coords[pid][1]))
+
+        def _home_cluster_dist(c: int) -> float:
+            if dist_fn is not None:
+                r = cluster_rep.get(c)
+                if r is not None:
+                    return dist_fn(HOME_ID, r)
+            return haversine_km(home[0], home[1], center[c][0], center[c][1])
+
         # Цепочка ближайших соседей по центроидам кустов (с приоритетом своей
         # линии): соседние районы идут подряд, день не «прыгает» через весь город.
+        # Старт — ближайший к дому район ПО ДОРОГЕ (не через канал напрямую).
         keys = list(center.keys())
         if keys:
             if home is not None:
-                start = min(keys, key=lambda c: haversine_km(home[0], home[1], center[c][0], center[c][1]))
+                start = min(keys, key=_home_cluster_dist)
             else:
                 start = min(keys, key=lambda c: center[c])
             ranked = [start]
