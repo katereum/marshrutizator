@@ -490,6 +490,8 @@ def optimize(req: OptimizeRequest):
         template=template,
         home=home,
         home_by_weekday=home_by_weekday,
+        home_address=req.home_address,
+        home_address_overrides=req.home_address_overrides,
         road_matrix=road_matrix,
         focus=req.focus,
         caps=caps,
@@ -554,10 +556,12 @@ def result_days(job_id: str):
         raise HTTPException(status_code=404, detail="Результат не найден")
     locked = set(job.get("locked") or set())
     points_by_id = job.get("points_by_id") or {}
+    home_address = job.get("home_address") or ""
+    overrides = job.get("home_address_overrides") or {}
     routes = []
     for r in job["results"]:
         days = []
-        for ds in r.days:
+        for i, ds in enumerate(r.days):
             visits = []
             for v in ds.ordered_visits:
                 pid = v.rsplit("#", 1)[0]
@@ -567,12 +571,16 @@ def result_days(job_id: str):
                     "code": pid,
                     "metro": p.metro if p else "",
                     "street": p.street if p else "",
+                    "address": _human_address(p) if p else "",
                 })
             days.append({
                 "date": ds.date.isoformat(),
                 "weekday": ds.weekday,
                 "count": len(ds.ordered_visits),
+                "limit": r.stats.per_day_load[i] if i < len(r.stats.per_day_load) else None,
                 "locked": f"{r.trade_rep_code}|{ds.date.isoformat()}" in locked,
+                "start_address": overrides.get(str(ds.weekday), home_address),
+                "end_address": home_address,
                 "visits": visits,
             })
         routes.append({
@@ -718,6 +726,9 @@ def edit_point(job_id: str, body: EditPointRequest):
         raise HTTPException(status_code=404, detail="День не найден")
     ds = r.days[i]
     code = body.code
+    locked = set(job.get("locked") or set())
+    if f"{r.trade_rep_code}|{ds.date.isoformat()}" in locked:
+        raise HTTPException(status_code=409, detail="День согласован — снимите согласование, чтобы править")
     in_day = [v for v in ds.ordered_visits if v.rsplit("#", 1)[0] == code]
     in_unplanned = [v for v in r.unplanned if v.rsplit("#", 1)[0] == code]
 
@@ -735,13 +746,15 @@ def edit_point(job_id: str, body: EditPointRequest):
             for j, other in enumerate(r.days):
                 if j == i:
                     continue
+                if f"{r.trade_rep_code}|{other.date.isoformat()}" in locked:
+                    continue  # согласованные дни не трогаем
                 moved = [v for v in other.ordered_visits if v.rsplit("#", 1)[0] == code]
                 if moved:
                     other.ordered_visits = [v for v in other.ordered_visits if v.rsplit("#", 1)[0] != code]
                     ds.ordered_visits = list(ds.ordered_visits) + moved
                     break
             if not moved:
-                raise HTTPException(status_code=409, detail="Точки нет ни в «Не запланировано», ни в других днях")
+                raise HTTPException(status_code=409, detail="Точки нет ни в «Не запланировано», ни в несогласованных днях")
 
     # Пересчитать суммарный километраж (маршрут изменился).
     points = list((job.get("points_by_id") or {}).values())

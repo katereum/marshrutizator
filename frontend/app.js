@@ -289,6 +289,7 @@ function renderMap(jobId) {
         );
         marker.on("click", () => onMarkerClick(pr.code));
         marker._baseColor = freqColor(pr.frequency);
+        marker._address = pr.address || "";
         pointsLayer.addLayer(marker);
         pointsBounds.push([lat, lon]);
         state.markers[pr.code] = marker;
@@ -377,7 +378,28 @@ function applyEditVisuals() {
 
 function onMarkerClick(code) {
   if (!state.editingDate) return;
-  togglePoint(code);
+  const marker = state.markers[code];
+  if (!marker) return;
+  const inDay = state.dayCodes[state.editingDate] && state.dayCodes[state.editingDate].has(code);
+  const addr = marker._address || code;
+  const content =
+    '<div class="edit-pop">' +
+    `<div class="edit-pop-code">${escapeHtml(code)}</div>` +
+    `<div class="edit-pop-addr">${escapeHtml(addr)}</div>` +
+    '<div class="edit-pop-actions">' +
+    (inDay
+      ? '<button class="edit-pop-btn remove" type="button">✕ Убрать из маршрута</button>'
+      : '<button class="edit-pop-btn add" type="button">＋ Добавить в маршрут</button>') +
+    '</div></div>';
+  marker.bindPopup(content, { className: "edit-popup", offset: [0, -4] }).openPopup();
+  setTimeout(() => {
+    const node = marker.getPopup().getElement();
+    const btn = node && node.querySelector(".edit-pop-btn");
+    if (btn) btn.onclick = () => {
+      if (mapInstance) mapInstance.closePopup();
+      editPointAction(code, inDay ? "remove" : "add");
+    };
+  }, 0);
 }
 
 function restoreEditView() {
@@ -389,11 +411,9 @@ function restoreEditView() {
   }
 }
 
-async function togglePoint(code) {
+async function editPointAction(code, action) {
   const date = state.editingDate;
   if (!date) return;
-  const inDay = state.dayCodes[date] ? state.dayCodes[date].has(code) : false;
-  const action = inDay ? "remove" : "add";
   try {
     const resp = await fetch(`/api/result/${state.jobId}/edit_point`, {
       method: "POST",
@@ -408,24 +428,42 @@ async function togglePoint(code) {
     setStatus("Не удалось сохранить правку", true);
     return;
   }
-  if (action === "remove") {
-    if (state.dayCodes[date]) state.dayCodes[date].delete(code);
-    state.unplannedCodes.add(code);
-  } else {
-    if (!state.dayCodes[date]) state.dayCodes[date] = new Set();
-    state.dayCodes[date].add(code);
-    state.unplannedCodes.delete(code);
+  await refreshEdit();
+}
+
+async function optimizeOrder() {
+  const date = state.editingDate;
+  if (!date) return;
+  try {
+    const resp = await fetch(`/api/result/${state.jobId}/regenerate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ employee: state.routeEmployee, date, variant: 1, swap: false }),
+    });
+    if (!resp.ok) {
+      setStatus(await readErrorMessage(resp), true);
+      return;
+    }
+  } catch (e) {
+    setStatus("Не удалось оптимизировать порядок", true);
+    return;
   }
+  setStatus("Порядок объезда обновлён", false);
+  await refreshEdit();
+}
+
+async function refreshEdit() {
   await renderDays(state.jobId);
   await renderMap(state.jobId);
   restoreEditView();
+  renderEditPanel();
 }
 
 function enterEditMode(date) {
   state.editingDate = date;
   applyEditVisuals();
   restoreEditView();
-  showEditHint();
+  renderEditPanel();
 }
 
 function exitEditMode() {
@@ -436,28 +474,60 @@ function exitEditMode() {
     select.value = "all";
     if (select.onchange) select.onchange();
   }
-  hideEditHint();
+  hideEditPanel();
   renderDays(state.jobId);
 }
 
-function showEditHint() {
-  let hint = el("edit-hint");
-  if (!hint) {
-    hint = document.createElement("div");
-    hint.id = "edit-hint";
-    hint.className = "edit-hint";
-    mapSection.appendChild(hint);
+function ensureEditPanel() {
+  let panel = el("edit-panel");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "edit-panel";
+    panel.className = "edit-panel hidden";
+    mapSection.appendChild(panel);
   }
-  hint.innerHTML =
-    "<b>Режим правки:</b> кликни точку — чёрная обводка = убрать из дня, синяя = добавить в день. " +
-    '<button id="edit-done" class="day-btn approve" type="button">Готово</button>';
+  return panel;
+}
+
+function renderEditPanel() {
+  const date = state.editingDate;
+  const panel = ensureEditPanel();
+  if (!date) { panel.classList.add("hidden"); return; }
+  const day = (state.daysData || []).find((d) => d.date === date);
+  if (!day) { panel.classList.add("hidden"); return; }
+  const count = day.count;
+  const limit = day.limit || 0;
+  const remaining = Math.max(0, limit - count);
+  const rows = day.visits.map((v, idx) =>
+    `<li><span class="route-idx">${idx + 1}</span>${escapeHtml(v.address || v.code)}</li>`
+  ).join("");
+  panel.innerHTML =
+    '<div class="edit-panel-head"><b>Правка маршрута</b>' +
+    `<span class="edit-panel-date">${escapeHtml(date)}</span></div>` +
+    '<div class="edit-cap"><span>Точек: <b>' + count + '</b> из <b>' + (limit || "—") + '</b></span>' +
+    (limit
+      ? `<span class="${remaining > 0 ? "can-add" : "full"}">${remaining > 0 ? "можно добавить ещё " + remaining : "лимит заполнен"}</span>`
+      : "") +
+    '</div>' +
+    '<ol class="edit-route">' +
+    `<li class="route-end">🅿 ${escapeHtml(day.start_address || "Старт (дом)")}</li>` +
+    rows +
+    `<li class="route-end">🏠 ${escapeHtml(day.end_address || "Дом")}</li>` +
+    '</ol>' +
+    '<div class="edit-panel-actions">' +
+    '<button id="edit-optimize" class="primary" type="button">Оптимизировать порядок</button>' +
+    '<button id="edit-done" class="day-btn approve" type="button">Готово</button>' +
+    '</div>';
+  panel.classList.remove("hidden");
+  const opt = el("edit-optimize");
+  if (opt) opt.onclick = optimizeOrder;
   const done = el("edit-done");
   if (done) done.onclick = exitEditMode;
 }
 
-function hideEditHint() {
-  const hint = el("edit-hint");
-  if (hint) hint.remove();
+function hideEditPanel() {
+  const panel = el("edit-panel");
+  if (panel) panel.classList.add("hidden");
 }
 
 function runStageSequence() {
@@ -678,6 +748,7 @@ async function renderDays(jobId) {
   const route = routes[0]; // одна база = один торговый представитель (обычный случай)
   if (!route) return;
   state.routeEmployee = route.employee;
+  state.daysData = route.days;
   state.dayCodes = {};
   route.days.forEach((day) => {
     state.dayCodes[day.date] = new Set(day.visits.map((v) => v.code));

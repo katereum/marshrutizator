@@ -214,6 +214,9 @@ class TestAPI(unittest.TestCase):
         routes = r.json()["routes"]
         emp = routes[0]["employee"]
         first = routes[0]["days"][0]
+        self.assertIn("limit", first)
+        self.assertIn("start_address", first)
+        self.assertIn("address", first["visits"][0])
         date = first["date"]
         code = first["visits"][0]["code"]
 
