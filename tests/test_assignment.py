@@ -26,6 +26,15 @@ class TestAssignment(unittest.TestCase):
         self.assertEqual(len(days), 4)
         self.assertTrue(all(b - a >= 2 for a, b in zip(days, days[1:])))
 
+    def test_multi_frequency_not_on_consecutive_days(self):
+        # Частота 2 → два визита НЕ подряд (минимальный разрыв ~5 раб. дней).
+        visits = [Visit("a", 0, 0), Visit("a", 1, 0)]
+        visits += [Visit(f"p{i}", 0, 0) for i in range(30)]
+        day_visits, _ = assign_days(visits, 21)
+        days = sorted(d for d in range(21) if any(v.startswith("a#") for v in day_visits[d]))
+        self.assertEqual(len(days), 2)
+        self.assertGreaterEqual(days[1] - days[0], 5)
+
     def test_empty(self):
         day_visits, load = assign_days([], 5)
         self.assertEqual(load, [0, 0, 0, 0, 0])
