@@ -22,14 +22,28 @@ def cluster_points(points: list[Point], eps_km: float = 5.0, dist_fn=None) -> di
     """
     if not points:
         return {}
-    if any(p.metro.strip() for p in points):
-        cluster = _cluster_by_address(points)
-        # Соседние станции метро (один «район») сливаем в куст, чтобы объезжать
-        # их вместе, а не возвращаться. Диаметр куста ограничен — без цепочек.
-        return _merge_neighbors(cluster, points, max_diameter_km=2.5)
-    if all(p.has_coords for p in points):
-        return _cluster_by_grid(points, eps_km / 111.0)
-    return _cluster_by_address(points)
+    with_metro = [p for p in points if p.metro.strip()]
+    without_metro = [p for p in points if not p.metro.strip()]
+    cluster: dict[str, int] = {}
+    if with_metro:
+        c = _cluster_by_address(with_metro)
+        cluster.update(_merge_neighbors(c, with_metro, max_diameter_km=2.5))
+    if without_metro:
+        # Точки БЕЗ метро — по географии (сетка), а не по населённому пункту:
+        # иначе все «Москва без метро» склеиваются в один гигантский кластер, и
+        # дальние точки размазываются по дням (получаются «круги»).
+        if all(p.has_coords for p in without_metro):
+            c = _cluster_by_grid(without_metro, eps_km / 111.0)
+        else:
+            c = _cluster_by_address(without_metro)
+        offset = max(cluster.values(), default=-1) + 1
+        for pid, cid in c.items():
+            cluster[pid] = cid + offset
+    if not cluster:
+        if all(p.has_coords for p in points):
+            return _cluster_by_grid(points, eps_km / 111.0)
+        return _cluster_by_address(points)
+    return cluster
 
 
 def _cluster_by_distance(points: list[Point], eps_km: float, dist_fn=None) -> dict[str, int]:
