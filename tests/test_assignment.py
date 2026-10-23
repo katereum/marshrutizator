@@ -188,6 +188,24 @@ class TestAssignment(unittest.TestCase):
         self.assertEqual(d0, set(south))
         self.assertEqual(d1, set(north))
 
+    def test_per_day_home_override_prefers_points_toward_home(self):
+        # «Начиная с близлежащих точек ПО ДОРОГЕ К ДОМУ»: при равной близости к
+        # стартовому адресу день должен брать точки В СТОРОНУ дома, а не за спину.
+        home = (55.86, 37.50)                    # дом — север
+        home_by_weekday = {0: (55.68, 37.50)}    # понедельник стартует с юга
+        coords = {
+            "toward": (55.72, 37.50),   # севернее старта → к дому
+            "away":   (55.66, 37.50),   # южнее старта → от дома (ближе к старту!)
+        }
+        visits = [Visit("toward", 0, 0), Visit("away", 0, 1)]
+        day_visits, _ = assign_days(
+            visits, 3, coords=coords, caps=[1, 1, 1],
+            home=home, home_by_weekday=home_by_weekday, weekdays=[0, 1, 2],
+        )
+        d0 = {v.rsplit("#", 1)[0] for v in day_visits[0]}
+        # «away» ближе к старту, но в противоположную от дома сторону — не берём.
+        self.assertEqual(d0, {"toward"})
+
 
 if __name__ == "__main__":
     unittest.main()
