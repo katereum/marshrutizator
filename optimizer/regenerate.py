@@ -148,6 +148,24 @@ def recluster_day(
         if 0 <= nd < len(result.days) and result.days[nd].date.isoformat() not in locked_dates and nd not in window:
             window.append(nd)
 
+    # Минимальный разрыв между визитами ОДНОЙ точки (рабочих дней). Переделка не
+    # должна ставить повторный визит точки в ту же неделю, что и её покрытие/другой
+    # повтор — иначе после «переделать» одна и та же точка оказывается в двух днях
+    # одной недели (пользователь это ловит: «нельзя одни и те же точки в неделю»).
+    gap = 5
+    fixed_pid_days: dict[str, list[int]] = {}
+    for nd in range(len(result.days)):
+        if nd in window:
+            continue  # окно перераспределяется — его текущие дни не важны
+        for v in result.days[nd].ordered_visits:
+            fixed_pid_days.setdefault(_pid(v), []).append(nd)
+
+    def gap_ok(pid: str, nd: int) -> bool:
+        for other in fixed_pid_days.get(pid, ()):
+            if abs(other - nd) < gap:
+                return False
+        return True
+
     # Все визиты окна (дни + пул) с координатами, без дублей visit_id.
     visits: list[tuple[str, tuple[float, float]]] = []
     seen: set[str] = set()
@@ -199,6 +217,8 @@ def recluster_day(
                 break
             if _pid(v) in used_pids:
                 continue
+            if not gap_ok(_pid(v), nd):
+                continue
             assigned[nd].append(v)
             used_pids.add(_pid(v))
             remaining.remove((v, c))
@@ -209,6 +229,8 @@ def recluster_day(
             if len(assigned[nd]) >= targets[nd]:
                 break
             if _pid(v) in used_pids:
+                continue
+            if not gap_ok(_pid(v), nd):
                 continue
             assigned[nd].append(v)
             used_pids.add(_pid(v))
