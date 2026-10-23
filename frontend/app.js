@@ -24,6 +24,10 @@ const resultBox = el("result");
 const mapSection = el("map-section");
 const daysSection = el("days-section");
 const daysList = el("days-list");
+const redoOptimizeBtn = el("redo-optimize-btn");
+
+// Дни, отмеченные «Переделать» (красные) — переделываются пакетно кнопкой «Оптимизировать».
+const pendingRedo = new Set();
 
 // Прогресс обработки для машинки (0..1); реальную реализацию ставит блок с машинкой.
 let setCarProgress = function () {};
@@ -435,23 +439,31 @@ function showDayChanged(data) {
   const text = el("day-changed-text");
   const okBtn = el("day-changed-ok");
   if (!modal || !text) return;
-  const parts = [];
-  if (Array.isArray(data.added_metros) && data.added_metros.length) {
-    parts.push("Добавил: " + data.added_metros.join(", "));
+  if (typeof data.summary === "string") {
+    text.textContent = data.summary;
+  } else {
+    const parts = [];
+    if (Array.isArray(data.added_metros) && data.added_metros.length) {
+      parts.push("Добавил: " + data.added_metros.join(", "));
+    }
+    if (Array.isArray(data.removed_metros) && data.removed_metros.length) {
+      parts.push("Убрал: " + data.removed_metros.join(", "));
+    }
+    if (!parts.length) {
+      parts.push("Порядок объезда обновлён (станции остались те же).");
+    }
+    if (Array.isArray(data.metros) && data.metros.length) {
+      parts.push("Теперь в дне: " + data.metros.join(", "));
+    }
+    text.textContent = parts.join("\n");
   }
-  if (Array.isArray(data.removed_metros) && data.removed_metros.length) {
-    parts.push("Убрал: " + data.removed_metros.join(", "));
-  }
-  if (!parts.length) {
-    parts.push("Порядок объезда обновлён (станции остались те же).");
-  }
-  if (Array.isArray(data.metros) && data.metros.length) {
-    parts.push("Теперь в дне: " + data.metros.join(", "));
-  }
-  text.textContent = parts.join("\n");
   text.style.whiteSpace = "pre-line";
   modal.classList.remove("hidden");
   okBtn.onclick = () => modal.classList.add("hidden");
+}
+
+if (redoOptimizeBtn) {
+  redoOptimizeBtn.addEventListener("click", optimizeDays);
 }
 
 optimizeBtn.addEventListener("click", async () => {
@@ -555,11 +567,18 @@ async function renderDays(jobId) {
   daysList.innerHTML = "";
   route.days.forEach((day) => daysList.appendChild(buildDayRow(day)));
   renderMeta({ total_km: route.total_km });
+  if (redoOptimizeBtn) {
+    redoOptimizeBtn.disabled = pendingRedo.size === 0;
+    redoOptimizeBtn.textContent = pendingRedo.size
+      ? `Оптимизировать отмеченные (${pendingRedo.size})`
+      : "Оптимизировать отмеченные";
+  }
 }
 
 function buildDayRow(day) {
   const row = document.createElement("div");
-  row.className = "day-row" + (day.locked ? " locked" : "");
+  const marked = pendingRedo.has(day.date);
+  row.className = "day-row" + (day.locked ? " locked" : "") + (marked ? " marked" : "");
   row.dataset.date = day.date;
 
   const main = document.createElement("div");
@@ -579,6 +598,11 @@ function buildDayRow(day) {
     const stateEl = document.createElement("span");
     stateEl.className = "day-state";
     stateEl.textContent = "✓ согласован";
+    title.appendChild(stateEl);
+  } else if (marked) {
+    const stateEl = document.createElement("span");
+    stateEl.className = "day-state marked";
+    stateEl.textContent = "⚠ на переделку";
     title.appendChild(stateEl);
   }
   main.appendChild(title);
@@ -610,8 +634,8 @@ function buildDayRow(day) {
 
     const redoBtn = document.createElement("button");
     redoBtn.className = "day-btn redo";
-    redoBtn.textContent = "Переделать";
-    redoBtn.onclick = () => regenerateDay(day.date);
+    redoBtn.textContent = marked ? "Отменить отметку" : "Переделать";
+    redoBtn.onclick = () => markRedo(day.date);
     actions.appendChild(redoBtn);
   }
   row.appendChild(actions);
@@ -633,6 +657,7 @@ async function postDayAction(action, date) {
 
 async function lockDay(date) {
   if (await postDayAction("lock", date)) {
+    pendingRedo.delete(date);
     setStatus("День согласован — он больше не меняется");
     await renderDays(state.jobId);
   }
@@ -642,6 +667,48 @@ async function unlockDay(date) {
   if (await postDayAction("unlock", date)) {
     setStatus("День разблокирован");
     await renderDays(state.jobId);
+  }
+}
+
+function markRedo(date) {
+  if (pendingRedo.has(date)) {
+    pendingRedo.delete(date);
+  } else {
+    pendingRedo.add(date);
+  }
+  renderDays(state.jobId);
+}
+
+async function optimizeDays() {
+  if (!pendingRedo.size) return;
+  const dates = Array.from(pendingRedo).sort();
+  redoOptimizeBtn.disabled = true;
+  setStatus(`Переделываю ${dates.length} отмеченных дней…`);
+  const resp = await fetch(`/api/result/${state.jobId}/optimize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ employee: state.routeEmployee, dates }),
+  });
+  if (!resp.ok) {
+    setStatus(await readErrorMessage(resp), true);
+    redoOptimizeBtn.disabled = false;
+    return;
+  }
+  const data = await resp.json();
+  const redone = data.redone || [];
+  pendingRedo.clear();
+  setStatus(`Переделано дней: ${redone.length}. Проверь новые варианты.`);
+  await renderDays(state.jobId);
+  renderMap(state.jobId);
+  if (redone.length) {
+    const summary = redone
+      .map((d) => {
+        const rem = d.removed_metros && d.removed_metros.length ? `Убрал: ${d.removed_metros.join(", ")}` : "";
+        const add = d.added_metros && d.added_metros.length ? `Добавил: ${d.added_metros.join(", ")}` : "";
+        return `${d.date}: ${[rem, add].filter(Boolean).join(" · ") || "без изменений"}`;
+      })
+      .join("\n");
+    showDayChanged({ summary });
   }
 }
 

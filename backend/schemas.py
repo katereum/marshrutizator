@@ -50,3 +50,10 @@ class RegenerateRequest(BaseModel):
     date: date
     variant: int = 0
     swap: bool = True
+
+
+class OptimizeDaysRequest(BaseModel):
+    """Пакетная переделка: переделать несколько отмеченных дней разом."""
+
+    employee: str
+    dates: list[date]

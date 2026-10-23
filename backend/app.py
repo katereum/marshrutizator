@@ -45,7 +45,7 @@ from parser import (
 )
 
 from .jobstore import JobStore
-from .schemas import DayAction, OptimizeRequest, RegenerateRequest
+from .schemas import DayAction, OptimizeDaysRequest, OptimizeRequest, RegenerateRequest
 
 try:
     from dotenv import load_dotenv
@@ -652,6 +652,55 @@ def regenerate(job_id: str, body: RegenerateRequest):
         "removed_metros": removed,
         "added_metros": added,
     }
+
+
+@app.post("/api/result/{job_id}/optimize")
+def optimize_days(job_id: str, body: OptimizeDaysRequest):
+    """Пакетная переделка: пересобирает отмеченные дни разом (согласованные не трогает)."""
+    job = store.get(job_id)
+    if job is None or job.get("results") is None:
+        raise HTTPException(status_code=404, detail="Результат не найден")
+    locked = set(job.get("locked") or set())
+    points = list((job.get("points_by_id") or {}).values())
+    points_by_id = job.get("points_by_id") or {}
+
+    def _metro_of(v):
+        p = points_by_id.get(v.rsplit("#", 1)[0])
+        return p.metro if p else ""
+
+    redone = []
+    for date in body.dates:
+        key = f"{body.employee}|{date.isoformat()}"
+        if key in locked:
+            continue  # согласованный день не трогаем
+        r, i = _find_result_and_day(job, body.employee, date.isoformat())
+        if r is None or i is None:
+            continue
+        before = list(r.days[i].ordered_visits)
+        before_metros = sorted({_metro_of(v) for v in before if _metro_of(v)})
+        regenerate_day(
+            r, i, 0,
+            points=points,
+            home=job.get("home"),
+            home_by_weekday=job.get("home_by_weekday"),
+            road_matrix=job.get("road_matrix"),
+            focus=job.get("focus") or "economy",
+            work_on_weekends=job.get("work_on_weekends", False),
+            swap=True,
+            locked_dates=locked,
+        )
+        ds = r.days[i]
+        after_metros = sorted({_metro_of(v) for v in ds.ordered_visits if _metro_of(v)})
+        redone.append({
+            "date": ds.date.isoformat(),
+            "count": len(ds.ordered_visits),
+            "metros": after_metros,
+            "removed_metros": [m for m in before_metros if m not in after_metros],
+            "added_metros": [m for m in after_metros if m not in before_metros],
+        })
+    store.update(job_id, results=job["results"], geojson=_rebuild_geojson(job))
+    total_km = round(job["results"][0].stats.total_km, 1) if job["results"] else 0
+    return {"redone": redone, "total_km": total_km}
 
 
 @app.get("/api/result/{job_id}/geojson")

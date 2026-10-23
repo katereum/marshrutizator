@@ -152,6 +152,47 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.headers["content-type"], XLSX_MIME)
 
+    def test_days_optimize_batch_keeps_locked(self):
+        planning = make_xlsx(
+            PLANNING_COLUMNS,
+            [planning_row("A001", 1), planning_row("A002", 1), planning_row("A003", 1)],
+        )
+        r = self.client.post(
+            "/api/upload/planning",
+            files={"file": ("planning.xlsx", planning, XLSX_MIME)},
+        )
+        pid = r.json()["file_id"]
+
+        with patch("backend.app.geocoder") as mock_geo, patch("backend.app.road_distance") as mock_road, patch("backend.app.route_geometry") as mock_route_geo:
+            mock_geo.geocode.return_value = (55.75, 37.61)
+            mock_road.matrix.return_value = [[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]
+            mock_route_geo.route.return_value = None
+            r = self.client.post(
+                "/api/optimize",
+                json={
+                    "planning_file_id": pid,
+                    "period_start": "2026-09-01",
+                    "period_end": "2026-09-30",
+                },
+            )
+        jid = r.json()["job_id"]
+
+        r = self.client.get(f"/api/result/{jid}/days")
+        routes = r.json()["routes"]
+        emp = routes[0]["employee"]
+        dates = [d["date"] for d in routes[0]["days"]]
+
+        # Зафиксировать первый день, остальные переделать пакетом.
+        self.client.post(f"/api/result/{jid}/lock", json={"employee": emp, "date": dates[0]})
+        r = self.client.post(f"/api/result/{jid}/optimize", json={"employee": emp, "dates": dates[1:]})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("redone", r.json())
+
+        # Согласованный день остаётся зафиксированным.
+        r = self.client.get(f"/api/result/{jid}/days")
+        locked0 = [d["locked"] for d in r.json()["routes"][0]["days"] if d["date"] == dates[0]]
+        self.assertEqual(locked0, [True])
+
     def test_optimize_falls_back_without_road_matrix(self):
         planning = make_xlsx(
             PLANNING_COLUMNS,

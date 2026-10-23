@@ -186,9 +186,12 @@
     <section id="days-section" class="panel hidden">
       <div class="days-head">
         <h2>Дни маршрута</h2>
-        <p class="days-hint">Согласуй подходящие дни, а неудобные — переделай (кнопка «Обновить» меняет день). Зафиксированные дни не меняются.</p>
+        <p class="days-hint">Согласуй подходящие дни (зелёный), а неудобные отметь «Переделать» (красный). В конце нажми «Оптимизировать» — переделаются только красные, согласованные не тронутся.</p>
       </div>
       <div id="days-list" class="days-list"></div>
+      <div class="days-actions">
+        <button class="primary" id="redo-optimize-btn" type="button" disabled>Оптимизировать отмеченные</button>
+      </div>
     </section>
   </main>
 

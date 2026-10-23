@@ -637,6 +637,7 @@ section.panel { padding: 28px; }
   transition: border-color 0.15s, background 0.15s;
 }
 .day-row.locked { border-color: #16a34a; background: #f0fdf4; }
+.day-row.marked { border-color: var(--accent); background: #fef2f2; }
 
 .day-main { flex: 1 1 auto; min-width: 0; }
 .day-title { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
@@ -656,8 +657,10 @@ section.panel { padding: 28px; }
   color: #16a34a;
   margin-left: 2px;
 }
+.day-state.marked { color: var(--accent); }
 
 .day-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+.days-actions { margin-top: 14px; display: flex; justify-content: flex-end; }
 .day-btn {
   padding: 8px 12px;
   border-radius: var(--radius-sm);
