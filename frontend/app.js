@@ -192,7 +192,7 @@ function freqColor(freq) {
 function fitMap(map, bounds) {
   if (!bounds || !bounds.length) return;
   try {
-    map.fitBounds(bounds, { padding: [16, 16] });
+    map.fitBounds(bounds, { padding: [16, 16], animate: false });
   } catch (err) {
     console.error("fitBounds error:", err);
   }
@@ -362,16 +362,12 @@ function applyEditVisuals() {
   const inDay = editing ? (state.dayCodes[editing] || new Set()) : null;
   Object.entries(state.markers).forEach(([code, m]) => {
     if (!m || !m.setStyle) return;
-    if (!editing) {
-      m.setStyle({ fillColor: m._baseColor, color: "#ffffff", weight: 1.5, fillOpacity: 1, radius: 6 });
-      return;
-    }
-    if (inDay && inDay.has(code)) {
-      // в редактируемом дне — клик уберёт
+    if (editing && inDay && inDay.has(code)) {
+      // в редактируемом дне — чёрная обводка (клик уберёт)
       m.setStyle({ fillColor: m._baseColor, color: "#000000", weight: 2.5, fillOpacity: 1, radius: 8 });
     } else {
-      // не в дне — клик добавит; БЕЗ чёрной обводки (обводка только у точек маршрута)
-      m.setStyle({ fillColor: "#0ea5e9", color: "#ffffff", weight: 1.5, fillOpacity: 1, radius: 7 });
+      // остальные — обычная цветовая гамма цикличности, без чёрной обводки
+      m.setStyle({ fillColor: m._baseColor, color: "#ffffff", weight: 1.5, fillOpacity: 1, radius: 6 });
     }
   });
 }
@@ -869,9 +865,32 @@ async function postDayAction(action, date) {
 async function lockDay(date) {
   if (await postDayAction("lock", date)) {
     pendingRedo.delete(date);
-    setStatus("День согласован — он больше не меняется");
-    await renderDays(state.jobId);
+    setStatus("День согласован — пересчитываю остальные дни…");
+    await reoptimizeRemaining();
   }
+}
+
+async function reoptimizeRemaining() {
+  // После ручной правки и согласования дня — пересобираем все несогласованные
+  // дни на основе новой базы (учтены добавленные/убранные точки).
+  await renderDays(state.jobId);
+  const nonLocked = (state.daysData || []).filter((d) => !d.locked).map((d) => d.date);
+  if (!nonLocked.length) {
+    setStatus("Все дни согласованы");
+    return;
+  }
+  const resp = await fetch(`/api/result/${state.jobId}/optimize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ employee: state.routeEmployee, dates: nonLocked }),
+  });
+  if (!resp.ok) {
+    setStatus(await readErrorMessage(resp), true);
+    return;
+  }
+  setStatus("Остальные дни пересчитаны на основе новых данных");
+  await renderDays(state.jobId);
+  renderMap(state.jobId);
 }
 
 async function unlockDay(date) {
