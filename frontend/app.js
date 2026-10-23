@@ -199,7 +199,7 @@ function fitMap(map, bounds) {
 }
 
 function renderMap(jobId) {
-  fetch(`/api/result/${jobId}/geojson`)
+  return fetch(`/api/result/${jobId}/geojson`)
     .then((r) => r.json())
     .then((geojson) => {
       const features = geojson.features || [];
@@ -370,8 +370,8 @@ function applyEditVisuals() {
       // в редактируемом дне — клик уберёт
       m.setStyle({ fillColor: m._baseColor, color: "#000000", weight: 2.5, fillOpacity: 1, radius: 8 });
     } else {
-      // не в дне — клик добавит (из «Не запланировано» или из другого дня)
-      m.setStyle({ fillColor: "#0ea5e9", color: "#000000", weight: 2.5, fillOpacity: 1, radius: 8 });
+      // не в дне — клик добавит; БЕЗ чёрной обводки (обводка только у точек маршрута)
+      m.setStyle({ fillColor: "#0ea5e9", color: "#ffffff", weight: 1.5, fillOpacity: 1, radius: 7 });
     }
   });
 }
@@ -453,10 +453,14 @@ async function optimizeOrder() {
 }
 
 async function refreshEdit() {
+  const map = mapInstance;
+  const saved = map ? { c: map.getCenter(), z: map.getZoom() } : null;
   await renderDays(state.jobId);
   await renderMap(state.jobId);
   restoreEditView();
   renderEditPanel();
+  // Возвращаем прежний масштаб/центр — карта не «слетает» при добавлении/убирании.
+  if (map && saved) map.setView(saved.c, saved.z, { animate: false });
 }
 
 function enterEditMode(date) {
@@ -499,7 +503,11 @@ function renderEditPanel() {
   const limit = day.limit || 0;
   const remaining = Math.max(0, limit - count);
   const rows = day.visits.map((v, idx) =>
-    `<li><span class="route-idx">${idx + 1}</span>${escapeHtml(v.address || v.code)}</li>`
+    '<li class="route-point">' +
+    `<span class="route-idx">${idx + 1}</span>` +
+    `<span class="route-addr">${escapeHtml(v.address || v.code)}</span>` +
+    `<button class="route-remove" data-code="${escapeHtml(v.code)}" title="Убрать из маршрута" type="button">✕</button>` +
+    '</li>'
   ).join("");
   panel.innerHTML =
     '<div class="edit-panel-head"><b>Правка маршрута</b>' +
@@ -519,6 +527,9 @@ function renderEditPanel() {
     '<button id="edit-done" class="day-btn approve" type="button">Готово</button>' +
     '</div>';
   panel.classList.remove("hidden");
+  panel.querySelectorAll(".route-remove").forEach((btn) => {
+    btn.onclick = () => editPointAction(btn.dataset.code, "remove");
+  });
   const opt = el("edit-optimize");
   if (opt) opt.onclick = optimizeOrder;
   const done = el("edit-done");

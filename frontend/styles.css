@@ -782,6 +782,25 @@ section.panel { padding: 28px; }
   background: #f1f5f9;
   border-radius: var(--radius-sm);
 }
+.edit-route .route-addr { flex: 1; }
+.edit-route .route-remove {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: #dc2626;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.55;
+}
+.edit-route .route-remove:hover { background: #dc2626; color: #fff; opacity: 1; }
 .edit-panel-actions {
   display: flex;
   gap: 8px;
